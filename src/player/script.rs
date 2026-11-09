@@ -63,6 +63,8 @@ impl Script {
     /// The script named by `DEMO_ANALYSIS_SCRIPT`, if it's set.
     pub fn from_env() -> Option<Self> {
         let path = std::env::var_os(SCRIPT_VARIABLE)?;
+        // The script is for this window only, not for programs it starts, like an updated version of itself.
+        std::env::remove_var(SCRIPT_VARIABLE);
         let text = std::fs::read_to_string(&path)
             .map_err(|error| eprintln!("script {}: {error}", PathBuf::from(&path).display()))
             .ok()?;

@@ -2921,45 +2921,52 @@ impl Gui {
                 });
             });
             ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                if let Some(offer) = self.update_offer.clone() {
-                    if self.update_install.is_some() {
-                        ui.spinner();
-                        ui.label(egui::RichText::new("Updating...").color(egui::Color32::from_rgb(110, 200, 130)));
-                    } else {
-                        let button = ui
-                            .button(egui::RichText::new(format!("Update available (build {})", offer.build)).color(egui::Color32::from_rgb(110, 200, 130)))
-                            .on_hover_text(format!(
-                                "A newer version of this program has been released. Click to download it, check it and restart.\n\
-                                 Your settings, reports and clips stay. This version is kept next to it as \"(previous).exe\".\n\
-                                 What's new: {}",
-                                offer.page
-                            ));
-                        if button.clicked() {
-                            let (send, receive) = std::sync::mpsc::channel();
-                            self.update_install = Some(receive);
-                            self.update_error = None;
-                            let ctx = ctx.clone();
-                            std::thread::spawn(move || {
-                                let _ = send.send(install_update(&offer));
-                                ctx.request_repaint();
-                            });
+            // Updates get a line of their own, so the buttons below keep their room.
+            if self.update_offer.is_some() || self.upstream_ahead.is_some_and(|ahead| ahead > 0) {
+                ui.horizontal(|ui| {
+                    if let Some(offer) = self.update_offer.clone() {
+                        if self.update_install.is_some() {
+                            ui.spinner();
+                            ui.label(egui::RichText::new("Updating...").color(egui::Color32::from_rgb(110, 200, 130)));
+                        } else {
+                            let button = ui
+                                .button(egui::RichText::new(format!("Update available (build {})", offer.build)).color(egui::Color32::from_rgb(110, 200, 130)))
+                                .on_hover_text(format!(
+                                    "A newer version of this program has been released. Click to download it, check it and restart.\n\
+                                     Your settings, reports and clips stay. This version is kept next to it as \"(previous).exe\".\n\
+                                     What's new: {}",
+                                    offer.page
+                                ));
+                            if button.clicked() {
+                                let (send, receive) = std::sync::mpsc::channel();
+                                self.update_install = Some(receive);
+                                self.update_error = None;
+                                let ctx = ctx.clone();
+                                std::thread::spawn(move || {
+                                    let _ = send.send(install_update(&offer));
+                                    ctx.request_repaint();
+                                });
+                            }
+                        }
+                        if let Some(error) = &self.update_error {
+                            ui.label(egui::RichText::new(error).color(egui::Color32::from_rgb(235, 105, 90)));
                         }
                     }
-                    if let Some(error) = &self.update_error {
-                        ui.label(egui::RichText::new(error).color(egui::Color32::from_rgb(235, 105, 90)));
+                    if let Some(ahead) = self.upstream_ahead.filter(|&ahead| ahead > 0) {
+                        if self.update_offer.is_some() {
+                            ui.separator();
+                        }
+                        let text = if ahead == 1 { "1 upstream update".to_string() } else { format!("{ahead} upstream updates") };
+                        ui.hyperlink_to(
+                            egui::RichText::new(text).color(egui::Color32::from_rgb(240, 190, 80)),
+                            format!("https://github.com/{UPSTREAM_REPO}/compare/{UPSTREAM_MERGED}...main"),
+                        )
+                        .on_hover_text("Fidoo001's original project has changed since this version was made. Click to see what changed. Your fork's robot checks every day and opens a pull request to bring the changes in.");
                     }
-                    ui.separator();
-                }
-                if let Some(ahead) = self.upstream_ahead.filter(|&ahead| ahead > 0) {
-                    let text = if ahead == 1 { "1 upstream update".to_string() } else { format!("{ahead} upstream updates") };
-                    ui.hyperlink_to(
-                        egui::RichText::new(text).color(egui::Color32::from_rgb(240, 190, 80)),
-                        format!("https://github.com/{UPSTREAM_REPO}/compare/{UPSTREAM_MERGED}...main"),
-                    )
-                    .on_hover_text("Fidoo001's original project has changed since this version was made. Click to see what changed. Your fork's robot checks every day and opens a pull request to bring the changes in.");
-                    ui.separator();
-                }
+                });
+                ui.add_space(4.0);
+            }
+            ui.horizontal(|ui| {
                 if ui.add_enabled(!self.processing, egui::Button::new("Open...")).clicked() {
                     if let Some(path) = rfd::FileDialog::new()
                         .add_filter("Demos", &["dem"])
