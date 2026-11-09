@@ -80,7 +80,7 @@ Main window
     TF2BD playerlists. Configure playerlists has buttons to add them
     back if you remove them.
   - It tells you when Fidoo001's project has new changes ("N upstream
-    updates" next to Open...), and updates itself: "Update available"
+    updates" above the buttons), and updates itself: "Update available"
     downloads the newest release, checks its checksum and restarts,
     keeping the previous version as "Demo Analysis (previous).exe".
   - A robot on the GitHub repository checks Fidoo001's project every

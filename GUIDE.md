@@ -66,7 +66,7 @@ Right-click a flagged player for more: view them in the playerlist, copy their S
 
 ![Right-clicking a flagged player in the main window](docs/images/main-right-click.png)
 
-**Updates.** When a newer build is released, **Update available** shows next to Open... . Click it to download the new version, check it against its published checksum and restart. Your settings, reports and clips stay, and the version you had is kept next to it as `Demo Analysis (previous).exe`, in case you want to go back. New builds bring in Fidoo001's changes to the detection checks: a robot on the GitHub repository checks his project every day, and his changes are released once they pass the tests and are merged. Until then, **N upstream updates** next to Open... shows that he has changed something; click it to see what.
+**Updates.** When a newer build is released, **Update available** shows above the buttons. Click it to download the new version, check it against its published checksum and restart. Your settings, reports and clips stay, and the version you had is kept next to it as `Demo Analysis (previous).exe`, in case you want to go back. New builds bring in Fidoo001's changes to the detection checks: a robot on the GitHub repository checks his project every day, and his changes are released once they pass the tests and are merged. Until then, **N upstream updates** there shows that he has changed something; click it to see what.
 
 ## The 3D player at a glance
 

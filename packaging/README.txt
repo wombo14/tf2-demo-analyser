@@ -104,7 +104,7 @@ Save clip... (bottom bar)
 
 Updates
   When a newer build is released (https://github.com/wombo14/tf2-demo-analyser/
-  releases), the main window shows "Update available" next to Open...
+  releases), the main window shows "Update available" above its buttons.
   Click it to download the new version, check it against its published
   checksum and restart. Your settings, reports and clips stay, and the
   version you had is kept next to it as "Demo Analysis (previous).exe" in
@@ -113,7 +113,7 @@ Updates
   New builds bring in Fidoo001's changes to the detection checks: a robot
   on the GitHub repository checks his project every day, and his changes
   are released once they pass the tests. Until then, "N upstream updates"
-  next to Open... shows that he has changed something.
+  there shows that he has changed something.
 
 
 FILES THE PROGRAM CREATES
