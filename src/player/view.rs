@@ -106,6 +106,8 @@ const MAX_SOUND_STEP_SECONDS: f64 = 0.5;
 /// Voice chat recordings of one player closer together than this are joined.
 const VOICE_JOIN_SECONDS: f32 = 1.0;
 const DEFAULT_VOLUME: f32 = 0.7;
+/// The 3D player's saved settings: overlays, glow, sound, camera.
+const SETTINGS_FILE: &str = "player_settings.json";
 /// TF2's explosion sounds (`BaseExplosionEffect.Sound`), at 95 dB.
 const EXPLOSION_SOUNDS: [&str; 3] = ["sound/weapons/explode1.wav", "sound/weapons/explode2.wav", "sound/weapons/explode3.wav"];
 const EXPLOSION_LEVEL: f32 = 95.0;
@@ -117,6 +119,10 @@ const DING_VOLUME: f32 = 0.6;
 /// Tags keep the kinds of sounds apart in the mixer, so one kind can be stopped.
 const DEMO_SOUND_TAG: u64 = 1 << 56;
 const VOICE_TAG: u64 = 2 << 56;
+/// The recorder's own looping weapon sound, like a firing minigun.
+const OWN_LOOP_TAG: u64 = 3 << 56;
+/// A looping weapon sound keeps going while shots come closer together than this.
+const FIRE_LOOP_GRACE_SECONDS: f64 = 0.35;
 const TAG_KIND: u64 = 0xff << 56;
 /// What the recorder's weapon sounds like when nobody else in the demo fired the
 /// same one: words in its model's name, and TF2's usual sound for it. More
@@ -399,6 +405,15 @@ fn clear_of_walls(from: Vec3, wanted: Vec3, first_hit: impl Fn(Vec3, Vec3) -> Op
     }
 }
 
+/// A team's outline colour, whatever the glow setting.
+fn team_glow(team: u8) -> Option<[f32; 3]> {
+    match team {
+        TEAM_RED => Some(GLOW_RED),
+        TEAM_BLUE => Some(GLOW_BLUE),
+        _ => None,
+    }
+}
+
 /// TF2's sound files, decoded the first time each one plays.
 struct SoundBank {
     files: tf_asset_loader::Loader,
@@ -665,7 +680,7 @@ fn build_trails(recording: &Recording) -> Vec<Trail> {
 }
 
 /// Which players get an outline that shows through walls.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum GlowMode {
     Off,
     #[default]
@@ -699,7 +714,8 @@ const GLOW_BLUE: [f32; 3] = [0.36, 0.62, 1.0];
 
 /// The view settings people pick in the top bar. They carry over to the next
 /// demo opened while the tool is running.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 struct ViewOptions {
     fov: f32,
     names: bool,
@@ -720,6 +736,7 @@ struct ViewOptions {
     voice_chat: bool,
     third_person: bool,
     chase_distance: f32,
+    only_their_kills: bool,
 }
 
 impl Default for ViewOptions {
@@ -744,7 +761,23 @@ impl Default for ViewOptions {
             voice_chat: true,
             third_person: false,
             chase_distance: CHASE_BEHIND,
+            only_their_kills: true,
         }
+    }
+}
+
+/// Where the 3D player's settings are kept between runs, next to the program like params.json.
+fn settings_path() -> Option<std::path::PathBuf> {
+    Some(std::env::current_exe().ok()?.parent()?.join(SETTINGS_FILE))
+}
+
+fn load_settings() -> Option<ViewOptions> {
+    serde_json::from_str(&std::fs::read_to_string(settings_path()?).ok()?).ok()
+}
+
+fn save_settings(options: &ViewOptions) {
+    if let (Some(path), Ok(text)) = (settings_path(), serde_json::to_string_pretty(options)) {
+        let _ = std::fs::write(path, text);
     }
 }
 
@@ -1350,6 +1383,8 @@ pub struct Session {
     pub only_their_kills: bool,
     /// Watching a player from behind instead of through their eyes.
     pub third_person: bool,
+    /// The settings last saved to disk.
+    saved_options: Option<ViewOptions>,
     /// The third-person camera's own angles (yaw, pitch) once swung around the
     /// player; `None` keeps it behind them, looking where they look.
     pub orbit: Option<(f32, f32)>,
@@ -1371,6 +1406,8 @@ pub struct Session {
     voice_lines: Vec<VoiceLine>,
     /// The recorder's own shots and swings, which their game played and the demo doesn't have.
     own_shots: Vec<(u32, String)>,
+    /// The recorder's looping weapon sound while it plays, and the tick of the last shot.
+    own_loop: Option<(String, f64)>,
     /// Each player's stretches in the demo, for the bar under the timeline.
     presence: Vec<Vec<PresenceRun>>,
     /// Whether the settings from the last demo have been brought over yet.
@@ -1491,6 +1528,7 @@ impl Session {
             aimbot_fovs: HashMap::new(),
             only_their_kills: true,
             third_person: false,
+            saved_options: None,
             orbit: None,
             chase_distance: CHASE_BEHIND,
             audio: super::audio::Audio::start(),
@@ -1503,6 +1541,7 @@ impl Session {
             voice_chat: true,
             voice_lines,
             own_shots,
+            own_loop: None,
             options_restored: false,
             camera_mode,
             free_camera: FreeCamera {
@@ -2049,7 +2088,9 @@ impl Session {
                         .collect(),
                 });
             }
-            let glow = self.glow_color(player.team);
+            // A cloaked Spy is invisible, as in TF2, but always keeps an outline so you can follow them.
+            let cloaked = player.is_cloaked();
+            let glow = if cloaked { team_glow(player.team) } else { self.glow_color(player.team) };
             actors.push(Actor {
                 mesh: body.mesh,
                 skin,
@@ -2058,6 +2099,7 @@ impl Session {
                 cube: lighting.cube,
                 sun: lighting.sun,
                 glow,
+                hidden: cloaked,
             });
 
             let weapon_mesh = characters
@@ -2081,6 +2123,7 @@ impl Session {
                     cube: lighting.cube,
                     sun: lighting.sun,
                     glow,
+                    hidden: cloaked,
                 });
             }
 
@@ -2099,6 +2142,7 @@ impl Session {
                 cube: lighting.cube,
                 sun: lighting.sun,
                 glow: None,
+                hidden: false,
             });
         }
 
@@ -2135,6 +2179,7 @@ impl Session {
                 cube: lighting.cube,
                 sun: lighting.sun,
                 glow: None,
+                hidden: false,
             });
         }
 
@@ -2178,6 +2223,7 @@ impl Session {
                     cube: lighting.cube,
                     sun: lighting.sun,
                     glow: None,
+                    hidden: false,
                 });
                 continue;
             }
@@ -2549,6 +2595,7 @@ impl Session {
                 audio.stop_all();
             }
             self.sound_was_on = false;
+            self.own_loop = None;
             return;
         }
         let resumed = !self.sound_was_on;
@@ -2584,6 +2631,10 @@ impl Session {
             }
             if let Some(clip) = bank.clip(name) {
                 let looping = clip.loop_start.is_some();
+                // A looping sound already going isn't started again on top of itself.
+                if looping && audio.update(tag, gains, pitch) {
+                    continue;
+                }
                 audio.play(clip, gains, pitch, tag, looping, 0.0);
             }
         }
@@ -2607,9 +2658,31 @@ impl Session {
                 } else {
                     ear_gains(eye, right, at, OWN_SHOT_LEVEL, 1.0)
                 };
-                if let Some(clip) = bank.clip(path) {
+                let Some(clip) = bank.clip(path) else { continue };
+                if clip.loop_start.is_none() {
                     audio.play(clip, gains, 1.0, 0, false, 0.0);
+                    continue;
                 }
+                // A looping weapon sound, like a minigun firing: one copy that keeps going
+                // while the shots keep coming, instead of a new one for every shot.
+                let tick = f64::from(*tick);
+                match &mut self.own_loop {
+                    Some((playing, last)) if playing == path => {
+                        *last = tick;
+                        audio.update(OWN_LOOP_TAG, gains, 1.0);
+                    }
+                    _ => {
+                        audio.stop(OWN_LOOP_TAG);
+                        audio.play(clip, gains, 1.0, OWN_LOOP_TAG, true, 0.0);
+                        self.own_loop = Some((path.clone(), tick));
+                    }
+                }
+            }
+        }
+        if let Some((_, last)) = &self.own_loop {
+            if (to - last) * interval > FIRE_LOOP_GRACE_SECONDS {
+                audio.stop(OWN_LOOP_TAG);
+                self.own_loop = None;
             }
         }
 
@@ -2802,6 +2875,7 @@ impl Session {
                 cube: lighting.cube,
                 sun: lighting.sun,
                 glow: None,
+                hidden: false,
             });
         }
         actors
@@ -2879,6 +2953,7 @@ impl Session {
             cube: lighting.cube,
             sun: lighting.sun,
             glow: None,
+            hidden: false,
         }];
         // A weapon the demo doesn't place in a slot, like the Spy's disguise kit,
         // has no first-person pose to sit in, so only the hands are shown.
@@ -2903,6 +2978,7 @@ impl Session {
                 cube: lighting.cube,
                 sun: lighting.sun,
                 glow: None,
+                hidden: false,
             });
         }
         actors
@@ -3351,6 +3427,7 @@ impl Session {
             voice_chat: self.voice_chat,
             third_person: self.third_person,
             chase_distance: self.chase_distance,
+            only_their_kills: self.only_their_kills,
         }
     }
 
@@ -3374,6 +3451,7 @@ impl Session {
         self.voice_chat = options.voice_chat;
         self.third_person = options.third_person;
         self.chase_distance = options.chase_distance;
+        self.only_their_kills = options.only_their_kills;
     }
 
     /// Steps a clip recording forward: shows the next moment, then keeps the
@@ -3532,8 +3610,10 @@ impl Session {
         self.drive_clip(ctx);
         if !self.options_restored {
             self.options_restored = true;
-            if let Some(options) = ctx.data(|data| data.get_temp::<ViewOptions>(view_options_id())) {
+            let remembered = ctx.data(|data| data.get_temp::<ViewOptions>(view_options_id())).or_else(load_settings);
+            if let Some(options) = remembered {
                 self.set_view_options(options);
+                self.saved_options = Some(options);
             }
         }
         self.drive_review(ctx);
@@ -3602,6 +3682,11 @@ impl Session {
 
         let options = self.view_options();
         ctx.data_mut(|data| data.insert_temp(view_options_id(), options));
+        // Saved to disk whenever a setting changes, so it's there next time.
+        if self.saved_options != Some(options) {
+            save_settings(&options);
+            self.saved_options = Some(options);
+        }
         keep_open
     }
 
@@ -5014,6 +5099,18 @@ mod tests {
         assert_eq!(describe_kill(&kill), "Vegeta killed Oldbutter (ambassador)");
         let fall = Kill { attacker: None, victim: Some(2), victim_name: "Oldbutter".into(), weapon: "world".into(), ..Kill::default() };
         assert_eq!(describe_kill(&fall), "Oldbutter died (world)");
+    }
+
+    #[test]
+    fn settings_survive_a_round_trip_and_old_files() {
+        let options = ViewOptions { volume: 0.25, muted: true, glow: GlowMode::Enemies, third_person: true, ..ViewOptions::default() };
+        let text = serde_json::to_string(&options).unwrap();
+        assert_eq!(serde_json::from_str::<ViewOptions>(&text).unwrap(), options);
+        // A file from an older version, missing newer settings, still loads with defaults for them.
+        let old: ViewOptions = serde_json::from_str(r#"{"fov": 100.0, "glow": "Off"}"#).unwrap();
+        assert_eq!(old.fov, 100.0);
+        assert_eq!(old.glow, GlowMode::Off);
+        assert_eq!(old.volume, DEFAULT_VOLUME);
     }
 
     #[test]

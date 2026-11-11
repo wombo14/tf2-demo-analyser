@@ -4,6 +4,7 @@
 
 # Runtime / local files
 params.json
+player_settings.json
 *.dem
 *.log
 *.exe

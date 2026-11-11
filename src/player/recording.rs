@@ -41,8 +41,11 @@ pub const PLAYER_IN_WATER: u8 = 1 << 4;
 pub const PLAYER_ZOOMED: u8 = 1 << 5;
 /// A revved minigun, a charging rifle or a drawn bow.
 pub const PLAYER_AIMING: u8 = 1 << 6;
+/// A Spy who's cloaked (TF2's "stealthed" condition), Dead Ringer included.
+pub const PLAYER_CLOAKED: u8 = 1 << 7;
 const COND_AIMING: i64 = 1 << 0;
 const COND_ZOOMED: i64 = 1 << 1;
+const COND_STEALTHED: i64 = 1 << 4;
 /// Moves bigger than this between frames are respawns or teleports, not walking.
 const MAX_STRIDE: f32 = 300.0;
 
@@ -132,6 +135,10 @@ impl PlayerFrame {
 
     pub fn is_in_water(&self) -> bool {
         self.flags & PLAYER_IN_WATER != 0
+    }
+
+    pub fn is_cloaked(&self) -> bool {
+        self.flags & PLAYER_CLOAKED != 0
     }
 
     pub fn is_zoomed(&self) -> bool {
@@ -1236,6 +1243,9 @@ impl Recorder {
             }
             if state.is_some_and(|state| state.conditions & COND_AIMING != 0) {
                 flags |= PLAYER_AIMING;
+            }
+            if state.is_some_and(|state| state.conditions & COND_STEALTHED != 0) {
+                flags |= PLAYER_CLOAKED;
             }
 
             let (mut weapon_slot, mut weapon_model) = (WEAPON_UNKNOWN, 0);

@@ -152,6 +152,14 @@ HISTORY (newest first)
   - Updated to Fidoo001's latest code (commit a89f7e1), which brought
     his new fidoo/ml_plain_projectile check. He rewrote his project's
     history the same day, so this version now sits on the new one.
+  - Cloaked Spies (Dead Ringer too) are invisible, as in TF2, but keep a
+    team-coloured outline even with Glow off.
+  - The 3D player's settings (overlays, glow, sound, camera, FOV) are
+    saved in player_settings.json and come back next time.
+  - Fixed: a recording Heavy's minigun started its 4-second looping
+    sound again on every shot, piling up into a deafening noise. One
+    copy now plays while firing and stops when firing stops, and a
+    looping sound from the demo is never started on top of itself.
   - Added updates: the app offers each new release from
     github.com/wombo14/tf2-demo-analyser and installs it on a click. A
     daily robot brings in Fidoo001's changes as pull requests, and a
