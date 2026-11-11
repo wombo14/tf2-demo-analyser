@@ -246,5 +246,13 @@ mod survey {
         for sound in scan.sounds.iter().take(8) {
             println!("SAMPLE {sound:?}");
         }
+        if let Ok(filter) = std::env::var("SOUND_FILTER") {
+            for (index, sound) in scan.sounds.iter().enumerate() {
+                let name = scan.names.get(sound.sound as usize).cloned().unwrap_or_default();
+                if name.contains(&filter) {
+                    println!("MATCH #{index} ent {} {name} flags {} ch {} vol {:.2}", sound.entity, sound.flags, sound.channel, sound.volume);
+                }
+            }
+        }
     }
 }

@@ -73,7 +73,8 @@ Show... menu (top bar)
 Sound            volume; click it (or press M) to mute. You hear what the
                  recording player's game heard, voice chat included.
                  Sound plays at up to 2x speed; clips are saved silent.
-Glow             team-coloured outlines through walls
+Glow             team-coloured outlines through walls. A cloaked Spy is
+                 invisible but always keeps an outline
 FOV              field of view
 
 Player list (right side)
@@ -119,12 +120,14 @@ Updates
 FILES THE PROGRAM CREATES
 -------------------------
 params.json        your settings, saved next to the program
+player_settings.json  the 3D player's settings (overlays, glow, sound,
+                   camera), kept from one run to the next
 reported_ids.txt   a public list of known cheaters, downloaded the first time
                    it's needed
 reports\           player reports you export from the 3D player
 clips\             clips you save from the 3D player
 
-Delete either one to start fresh.
+Delete params.json or player_settings.json to go back to the defaults.
 
 
 COMMAND-LINE VERSION

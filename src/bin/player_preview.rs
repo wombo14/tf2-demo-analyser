@@ -615,7 +615,7 @@ impl App {
                 let player = recording.player(frame, slot);
                 let events: Vec<u8> = recording.anims.iter().filter(|a| a.slot == slot && a.tick == tick).map(|a| a.event).collect();
                 println!(
-                    "trace {tick} at {:.0} {:.0} {:.1} yaw {:.0} pitch {:.0} ground {} duck {} alive {} weapon {} slot {} events {events:?}",
+                    "trace {tick} at {:.0} {:.0} {:.1} yaw {:.0} pitch {:.0} ground {} duck {} alive {} cloaked {} weapon {} slot {} events {events:?}",
                     player.position[0],
                     player.position[1],
                     player.position[2],
@@ -624,6 +624,7 @@ impl App {
                     player.is_on_ground(),
                     player.is_ducking(),
                     player.is_alive(),
+                    player.is_cloaked(),
                     recording.models[usize::from(player.weapon_model)],
                     player.weapon_slot
                 );

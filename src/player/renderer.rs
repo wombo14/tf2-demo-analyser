@@ -274,6 +274,8 @@ pub struct Actor {
     pub sun: f32,
     /// An outline in this colour that shows through walls.
     pub glow: Option<[f32; 3]>,
+    /// Not drawn itself, only its glow: a cloaked Spy.
+    pub hidden: bool,
 }
 
 /// Everything that changes from one frame to the next.
@@ -1199,6 +1201,9 @@ impl Renderer {
 
         let mut floats: Vec<f32> = Vec::with_capacity(MAX_BONES * 12);
         for actor in actors {
+            if actor.hidden {
+                continue;
+            }
             let Some(mesh) = self.meshes.get(actor.mesh) else { continue };
             let Some(parts) = mesh.skins.get(actor.skin).or(mesh.skins.first()) else { continue };
             floats.clear();

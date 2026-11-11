@@ -78,7 +78,7 @@ The 3D player rebuilds the match from the demo and TF2's own files: the real map
 2. The map, and who recorded the demo.
 3. **View** picks the player you watch, or the free camera. **First person** and **Third person** next to it choose between their eyes and a camera behind them.
 4. **Show...** turns the overlays on and off. See [The Show menu](#the-show-menu).
-5. **Glow** outlines players through walls: Everyone, Enemies, Teammates or Off.
+5. **Glow** outlines players through walls: Everyone, Enemies, Teammates or Off. A cloaked Spy is invisible, as in TF2, but always keeps an outline, even with Glow off.
 6. **FOV** sets the field of view.
 7. The kill feed: killer, [weapon], victim. Chat shows at the bottom left of the view, and who's talking on voice chat at the bottom right.
 8. The aimbot FOV circle, when you watch a player with aim detections.
@@ -247,6 +247,7 @@ The program keeps everything next to itself, so the folder can be moved or delet
 | File or folder | What it is |
 | --- | --- |
 | `params.json` | Your settings. Delete it to go back to the defaults. |
+| `player_settings.json` | The 3D player's settings: overlays, glow, sound, camera, FOV. Saved whenever you change one. Delete it to go back to the defaults. |
 | `reported_ids.txt` | A public list of known cheaters, downloaded the first time it's needed. Delete it to download it again. |
 | `reports\` | Player reports exported from the 3D player |
 | `clips\` | Clips saved from the 3D player |
