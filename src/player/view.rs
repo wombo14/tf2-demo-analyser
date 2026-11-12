@@ -405,6 +405,22 @@ fn clear_of_walls(from: Vec3, wanted: Vec3, first_hit: impl Fn(Vec3, Vec3) -> Op
     }
 }
 
+/// What a check looks for, in its own words: the description each check carries
+/// for the main window. Building every check is slow, so it's done once.
+fn check_description(check: &str) -> Option<&'static str> {
+    static DESCRIPTIONS: std::sync::OnceLock<HashMap<String, &'static str>> = std::sync::OnceLock::new();
+    DESCRIPTIONS
+        .get_or_init(|| {
+            crate::lib::algorithm::get_algorithms()
+                .iter()
+                .map(|algorithm| (algorithm.algorithm_name().to_string(), algorithm.tooltip()))
+                .filter(|(_, about)| !about.is_empty())
+                .collect()
+        })
+        .get(check)
+        .copied()
+}
+
 /// A team's outline colour, whatever the glow setting.
 fn team_glow(team: u8) -> Option<[f32; 3]> {
     match team {
@@ -4085,7 +4101,7 @@ impl Session {
                 ui.label(RichText::new(super::review::check_title(check)).strong().color(REVIEW_CHECK_COLOR));
                 ui.label(super::review::what_to_watch(check));
             });
-            if let Some(about) = crate::lib::algorithm::algorithm_tooltip(check) {
+            if let Some(about) = check_description(check) {
                 ui.add(egui::Label::new(RichText::new(about).small().color(MUTED)).wrap());
             }
             let tick = f64::from(marker.tick);

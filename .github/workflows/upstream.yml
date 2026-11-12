@@ -118,7 +118,8 @@ jobs:
             issue_body="${body}
 
           Open the pull request with one click: ${link}"
-            number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$issue_title\" in:title" --json number --jq '.[0].number // empty')
+            printf '## %s\n\n%s\n' "$issue_title" "$issue_body" >> "$GITHUB_STEP_SUMMARY"
+            number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$issue_title\" in:title" --json number --jq '.[0].number // empty' || true)
             if [ -n "$number" ]; then
               gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body "$issue_body"
             else
@@ -139,8 +140,13 @@ jobs:
           Merge https://github.com/Fidoo001/tf2-demo-analyser into main by hand and fix those files. This check runs again every day.
 
           Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # Shown on the run's page whatever happens; GitHub also emails about a failed run.
+          printf '## %s\n\n%s\n' "$title" "$body" >> "$GITHUB_STEP_SUMMARY"
           if [ "$open" = "0" ]; then
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+            if ! gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"; then
+              echo "::error::$title. Issues are switched off on this repository (Settings > General > Features > Issues), so see this run's summary."
+              exit 1
+            fi
           else
             echo "An issue is already open"
           fi

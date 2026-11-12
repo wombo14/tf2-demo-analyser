@@ -162,7 +162,7 @@ dependencies = [
 
 [[package]]
 name = "analysis-template"
-version = "0.1.0"
+version = "1.4.0"
 dependencies = [
  "anyhow",
  "bitbuffer",
@@ -186,7 +186,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "snap",
- "steamid-ng",
+ "steamid-ng 3.0.0",
  "symphonia",
  "tf-asset-loader",
  "tf-demo-parser",
@@ -250,9 +250,9 @@ dependencies = [
 
 [[package]]
 name = "ar_archive_writer"
-version = "0.5.3"
+version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6"
+checksum = "523e5e187fff36fcb8d1d19ccf0ca4ca43ec3d158316057f66dc6f72716bc5ec"
 dependencies = [
  "object",
 ]
@@ -3230,9 +3230,9 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pest"
-version = "2.9.5"
+version = "2.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8db75153506001cb36ed924f08cadc862eb3f8c4d0d534139f29074769d7660"
+checksum = "5ec53fd1d256900a9a771bf2720d42cef6f8bc91b4e25065fbd291e3e7222576"
 dependencies = [
  "memchr",
  "pest_stack_guard",
@@ -4026,6 +4026,8 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 [[package]]
 name = "steamid-ng"
 version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffb049f8faa2cba570c5366dbaf88ee5849725b16edb771848639fac92e33673"
 dependencies = [
  "enum_primitive",
  "lazy_static",
@@ -4035,6 +4037,12 @@ dependencies = [
  "serde_derive",
  "thiserror 1.0.69",
 ]
+
+[[package]]
+name = "steamid-ng"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3ed9aa559d0d2d286dfe34f728d00232281da08f2c6a2eaf09f67f4899cfdb3"
 
 [[package]]
 name = "steamlocate"
@@ -4284,7 +4292,7 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "snap",
- "steamid-ng",
+ "steamid-ng 1.0.0",
  "thiserror 2.0.20",
 ]
 
