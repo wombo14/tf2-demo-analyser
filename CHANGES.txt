@@ -4,8 +4,8 @@ DEMO ANALYSIS WITH 3D PLAYER - CHANGES
 This is a modified version of Demo Analysis by Fidoo001 and
 contributors (https://github.com/Fidoo001/tf2-demo-analyser), which is
 licensed under the GNU GPL version 3. This file lists everything this
-version changes compared with the original at commit a89f7e1
-(9 November 2026).
+version changes compared with the original at commit cba8390
+(12 November 2026).
 
 In short: it adds a built-in 3D demo player, so you can watch any
 detection without opening TF2. No detection check was added, removed or
@@ -92,6 +92,18 @@ Main window
 
 HISTORY (newest first)
 ----------------------
+
+13 November 2026
+  - Updated to Fidoo001's latest code (commit cba8390): an updated
+    ml_triggerbot, speed improvements, bug fixes, new default settings
+    and colours, steamid-ng from crates.io, and his own update notice.
+    His notice is switched off here (CHECK_FIDOO001_RELEASES in gui.rs),
+    because it points at his builds, which don't have the 3D player;
+    this version's own updater offers the merged builds instead.
+  - The 3D player's review mode reads each check's description from the
+    check itself, where Fidoo001 moved them.
+  - The daily check of Fidoo001's project now says what happened on its
+    run page when it can't open an issue (Issues are off on the fork).
 
 9 November 2026.
   - Added review mode.
