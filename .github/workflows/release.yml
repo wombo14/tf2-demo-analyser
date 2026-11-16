@@ -74,7 +74,11 @@ jobs:
         run: |
           build="${{ github.run_number }}"
           upstream=$(grep -oE 'UPSTREAM_MERGED: &str = "[0-9a-f]{7}' src/bin/gui.rs | grep -oE '[0-9a-f]{7}$')
+          # The newest entry of CHANGES.txt's history, so the release says what changed.
+          whats_new=$(python packaging/release_notes.py CHANGES.txt)
           notes="Demo Analysis with the 3D player, build ${build}, including Fidoo001's project up to ${upstream}.
+
+          ${whats_new}
 
           **Download:** Demo-Analysis-with-3D-Player.zip, unzip it anywhere and run \`Demo Analysis.exe\`. If you already have it, click **Update available** in the program instead.
 

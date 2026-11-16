@@ -59,12 +59,37 @@ pub struct Characters {
     pub skeletons: Vec<Skeleton>,
     /// Indexed by class number.
     pub classes: Vec<Option<ClassBody>>,
+    /// Players' own models, like Mann vs. Machine robots, by index into `Recording::models`,
+    /// with the class whose animations they use.
+    pub bodies: HashMap<u16, (u8, ClassBody)>,
     /// Indexed like `Recording::models`.
     pub by_model: Vec<Option<usize>>,
     /// How each mesh sits when nothing animates it, indexed like `skeletons`.
     pub idle_poses: Vec<Pose>,
     /// Each mesh's own animations, for things like arms and map objects.
     pub animations: Vec<Option<Animations>>,
+}
+
+impl Characters {
+    /// What a player looks like: their own model if they have one (a robot), else their class's.
+    pub fn body_of(&self, player: &super::recording::PlayerFrame) -> Option<&ClassBody> {
+        // Right after a robot respawns as another class its model can still be the old
+        // one for a moment; the class's own model is right then.
+        self.bodies
+            .get(&player.body_model)
+            .filter(|(class, _)| player.body_model != 0 && *class == player.class)
+            .map(|(_, body)| body)
+            .or_else(|| self.classes.get(usize::from(player.class))?.as_ref())
+    }
+}
+
+/// The class a player model is made for, from its folder: `models/bots/heavy_boss/...`
+/// is a Heavy, and the Sentry Buster (`models/bots/demo/...`) a Demoman.
+pub fn class_of_model(path: &str) -> Option<u8> {
+    let folder = path.strip_prefix("models/")?.split('/').nth(1)?;
+    let name = folder.strip_suffix("_boss").unwrap_or(folder);
+    let class = CLASS_FILES.iter().position(|class| !class.is_empty() && *class == name)?;
+    u8::try_from(class).ok()
 }
 
 /// Reads a model and its skeleton. Each skin gets its own list of parts.
@@ -202,6 +227,7 @@ pub fn load_characters(
     assets: &Assets,
     material: &mut dyn FnMut(&Assets, &str) -> usize,
     classes: &[u8],
+    bodies: &[(u8, u16)],
     models: &[String],
     meshes: &mut Vec<MeshData>,
 ) -> Characters {
@@ -232,8 +258,25 @@ pub fn load_characters(
         characters.classes[usize::from(class)] = Some(ClassBody { mesh: body, rig, arms });
     }
 
-    for path in models {
-        let loaded = if path.is_empty() {
+    // A robot moves like its class: its model, the class's animations.
+    for &(class, model) in bodies {
+        let Some(name) = CLASS_FILES.get(usize::from(class)).filter(|name| !name.is_empty()) else { continue };
+        let Some(path) = models.get(usize::from(model)) else { continue };
+        let Some((mesh, skeleton)) = load_mesh(assets, material, path) else { continue };
+        let Some(model_bytes) = assets.load(path) else { continue };
+        let animations = assets.load(&format!("models/player/{name}_animations.mdl")).unwrap_or_default();
+        let rig = Rig::read(&model_bytes, &animations);
+        meshes.push(mesh);
+        characters.idle_poses.push(skeleton.rest_pose());
+        characters.animations.push(None);
+        characters.skeletons.push(skeleton);
+        let arms = characters.classes[usize::from(class)].as_ref().and_then(|body| body.arms);
+        characters.bodies.insert(model, (class, ClassBody { mesh: meshes.len() - 1, rig, arms }));
+    }
+
+    for (index, path) in models.iter().enumerate() {
+        let is_body = bodies.iter().any(|&(_, model)| usize::from(model) == index);
+        let loaded = if path.is_empty() || is_body {
             None
         } else {
             load_animated(assets, material, path, meshes, &mut characters)
@@ -243,3 +286,17 @@ pub fn load_characters(
     characters
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn robot_models_belong_to_classes() {
+        assert_eq!(class_of_model("models/bots/heavy_boss/bot_heavy_boss.mdl"), Some(6));
+        assert_eq!(class_of_model("models/bots/demo/bot_sentry_buster.mdl"), Some(4));
+        assert_eq!(class_of_model("models/bots/scout/bot_scout.mdl"), Some(1));
+        assert_eq!(class_of_model("models/player/spy.mdl"), None);
+        assert_eq!(class_of_model("models/bots/boss_bot/boss_tank.mdl"), None);
+    }
+}

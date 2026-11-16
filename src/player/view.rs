@@ -15,7 +15,7 @@ use super::map::{load_map, rotation_from_angles, DemoContent, LightProbe, MapDat
 use super::audio::ear_gains;
 use super::demo_sounds::{CHAN_WEAPON, SND_CHANGE_PITCH, SND_CHANGE_VOL, SND_STOP, SND_STOP_LOOPING};
 use super::recording::{
-    read_demo, Kill, ObjectFrame, ObjectKind, PlayerFrame, Recording, ANIM_ATTACK_PRIMARY, ANIM_ATTACK_SECONDARY,
+    read_demo, Kill, ObjectFrame, ObjectKind, PlayerFrame, Recording, NO_OWNER, ANIM_ATTACK_PRIMARY, ANIM_ATTACK_SECONDARY,
     ANIM_DOUBLE_JUMP, ANIM_JUMP, ANIM_RELOAD, ANIM_RELOAD_END, ANIM_RELOAD_LOOP, CLASS_HEAVY, CLASS_MEDIC, TEAM_BLUE, TEAM_RED,
 };
 
@@ -164,6 +164,14 @@ const USUAL_SWING_SOUND: &str = "sound/weapons/cbar_miss1.wav";
 /// Sizes of the glowing projectiles TF2 draws as particles, in world units.
 const ENERGY_RING_RADIUS: f32 = 11.0;
 const ENERGY_BALL_RADIUS: f32 = 9.0;
+/// The sniper dot's size, as a share of its distance from the camera, so it looks the
+/// same size near and far, and its smallest radius in world units.
+const SNIPER_DOT_SIZE: f32 = 0.006;
+const SNIPER_DOT_MIN_RADIUS: f32 = 1.5;
+/// How far off the wall it's on the dot is drawn.
+const SNIPER_DOT_LIFT: f32 = 3.0;
+/// Further apart than this between frames, the dot jumped rather than moved.
+const SNIPER_DOT_JOIN: f32 = 400.0;
 const ORB_RADIUS: f32 = 16.0;
 const FIREBALL_RADIUS: f32 = 18.0;
 const FIRE_COLOR: [f32; 3] = [1.0, 0.5, 0.12];
@@ -628,6 +636,8 @@ fn describe_kill(kill: &Kill) -> String {
 struct Trail {
     kind: ObjectKind,
     team: u8,
+    /// The player slot that fired it, `NO_OWNER` when unknown.
+    owner: u8,
     crit: bool,
     ticks: Vec<u32>,
     points: Vec<Vec3>,
@@ -676,6 +686,7 @@ fn build_trails(recording: &Recording) -> Vec<Trail> {
                     trails.push(Trail {
                         kind: object.kind,
                         team: object.team,
+                        owner: object.owner,
                         crit: object.crit,
                         ..Trail::default()
                     });
@@ -753,6 +764,10 @@ struct ViewOptions {
     third_person: bool,
     chase_distance: f32,
     only_their_kills: bool,
+    sniper_dots: bool,
+    traces_only_watched: bool,
+    review_slow_motion: bool,
+    review_pause: bool,
 }
 
 impl Default for ViewOptions {
@@ -778,6 +793,10 @@ impl Default for ViewOptions {
             third_person: false,
             chase_distance: CHASE_BEHIND,
             only_their_kills: true,
+            sniper_dots: true,
+            traces_only_watched: false,
+            review_slow_motion: true,
+            review_pause: true,
         }
     }
 }
@@ -1099,6 +1118,8 @@ enum ReviewAction {
 pub enum PlayerRequest {
     /// Open the TF2BD "Mark player" dialog for this player.
     Mark { steam_id: u64, name: String },
+    /// Ask which demo to open in a new tab.
+    PickDemo,
 }
 
 /// What to open and where to start.
@@ -1173,10 +1194,23 @@ fn load(path: &PathBuf, progress: &Mutex<Progress>) -> Result<Loaded, String> {
         .collect();
     classes.sort_unstable();
     classes.dedup();
+    let mut used: Vec<u16> = recording
+        .players
+        .iter()
+        .filter(|player| player.body_model != 0 && player.is_on_a_team())
+        .map(|player| player.body_model)
+        .collect();
+    used.sort_unstable();
+    used.dedup();
+    let bodies: Vec<(u8, u16)> = used
+        .into_iter()
+        .filter_map(|model| Some((super::characters::class_of_model(&recording.models[usize::from(model)])?, model)))
+        .collect();
     let content = DemoContent {
         sky_name: recording.sky_name.clone(),
         classes,
         models: recording.models.clone(),
+        bodies,
     };
     let map = load_map(&loader, &recording.map, &content, |share| {
         report("Loading map", 0.5 + share * 0.5);
@@ -1184,7 +1218,69 @@ fn load(path: &PathBuf, progress: &Mutex<Progress>) -> Result<Loaded, String> {
     Ok(Loaded { recording, map, voice, sound_files: loader })
 }
 
+/// Detections with the player's name in front, as the timeline and list show them.
+fn named_markers(recording: &Recording, markers: &[Marker]) -> Vec<Marker> {
+    markers
+        .iter()
+        .map(|marker| {
+            let at = f64::from(marker.tick);
+            let name = recording
+                .slot_of_steam_id(marker.steam_id, at)
+                .map_or("Unknown player", |slot| recording.name_at(slot, at));
+            Marker {
+                label: format!("{name}: {}", marker.label),
+                ..marker.clone()
+            }
+        })
+        .collect()
+}
+
 impl DemoPlayer {
+    /// The demo file this player shows.
+    pub fn demo(&self) -> &std::path::Path {
+        &self.request.demo
+    }
+
+    /// How far loading has got, 0 to 1, while it's loading.
+    pub fn loading_share(&self) -> Option<f32> {
+        match &self.state {
+            State::Loading(loading) => Some(loading.progress.lock().map_or(0.0, |progress| progress.share)),
+            _ => None,
+        }
+    }
+
+    /// The demo's map, once it's loaded.
+    pub fn map_name(&self) -> Option<&str> {
+        match &self.state {
+            State::Ready(session) => Some(&session.recording.map),
+            _ => None,
+        }
+    }
+
+    /// Stops playing and silences it, for when its tab is left.
+    pub fn pause(&mut self) {
+        if let State::Ready(session) = &mut self.state {
+            session.pause();
+        }
+    }
+
+    /// Called when its tab comes back on screen: picks up settings changed in other tabs.
+    pub fn reactivate(&mut self) {
+        if let State::Ready(session) = &mut self.state {
+            session.options_restored = false;
+        }
+    }
+
+    /// Opens the same demo again: moves to the tick and player asked for, with the newer
+    /// detections, without loading it again.
+    pub fn retarget(&mut self, request: OpenRequest) {
+        match &mut self.state {
+            State::Ready(session) => session.retarget(&request),
+            State::Loading(_) => self.request = request,
+            State::Failed(_) => *self = Self::open(request),
+        }
+    }
+
     pub fn open(request: OpenRequest) -> Self {
         let progress = Arc::new(Mutex::new(Progress::default()));
         let (sender, result) = mpsc::channel();
@@ -1397,6 +1493,14 @@ pub struct Session {
     aimbot_fovs: HashMap<u64, (f32, usize)>,
     /// When the timeline shows only the watched player's kills and deaths.
     pub only_their_kills: bool,
+    /// Scoped Snipers' laser dots.
+    pub show_sniper_dots: bool,
+    /// Bullets, impacts and projectile trails only from the player being watched.
+    pub traces_only_watched: bool,
+    /// Review mode plays in slow motion; off, it plays at the speed you picked.
+    pub review_slow_motion: bool,
+    /// Review mode stops for a moment on each detection.
+    pub review_pause: bool,
     /// Watching a player from behind instead of through their eyes.
     pub third_person: bool,
     /// The settings last saved to disk.
@@ -1476,20 +1580,7 @@ impl Session {
         let (low, high) = map.bounds;
         let center = (low + high) * 0.5;
 
-        let markers = request
-            .markers
-            .iter()
-            .map(|marker| {
-                let at = f64::from(marker.tick);
-                let name = recording
-                    .slot_of_steam_id(marker.steam_id, at)
-                    .map_or("Unknown player", |slot| recording.name_at(slot, at));
-                Marker {
-                    label: format!("{name}: {}", marker.label),
-                    ..marker.clone()
-                }
-            })
-            .collect();
+        let markers = named_markers(&recording, &request.markers);
 
         let mut session = Self {
             demo,
@@ -1543,6 +1634,10 @@ impl Session {
             show_fov_circle: true,
             aimbot_fovs: HashMap::new(),
             only_their_kills: true,
+            show_sniper_dots: true,
+            traces_only_watched: false,
+            review_slow_motion: true,
+            review_pause: true,
             third_person: false,
             saved_options: None,
             orbit: None,
@@ -1566,14 +1661,48 @@ impl Session {
                 pitch: 20.0,
             },
         };
-        let flagged: Vec<u64> = super::review::flagged_players(&session.markers).into_iter().map(|(steam_id, _)| steam_id).collect();
+        session.estimate_aimbot_fovs();
+        session
+    }
+
+    fn estimate_aimbot_fovs(&mut self) {
+        self.aimbot_fovs.clear();
+        let flagged: Vec<u64> = super::review::flagged_players(&self.markers).into_iter().map(|(steam_id, _)| steam_id).collect();
         for steam_id in flagged {
-            let measure = |marker: &Marker| session.measured_flick(marker);
-            if let Some(estimate) = super::review::aimbot_fov(&session.markers, steam_id, &measure) {
-                session.aimbot_fovs.insert(steam_id, estimate);
+            let measure = |marker: &Marker| self.measured_flick(marker);
+            if let Some(estimate) = super::review::aimbot_fov(&self.markers, steam_id, &measure) {
+                self.aimbot_fovs.insert(steam_id, estimate);
             }
         }
-        session
+    }
+
+    /// Stops playing and silences it, for when its tab is left or the player is hidden.
+    fn pause(&mut self) {
+        self.playing = false;
+        if let Some(audio) = &self.audio {
+            audio.stop_all();
+        }
+        self.sound_was_on = false;
+        self.own_loop = None;
+    }
+
+    /// The same demo asked for again, maybe at another moment or player, and with the
+    /// detections from a newer analysis.
+    fn retarget(&mut self, request: &OpenRequest) {
+        if !request.markers.is_empty() {
+            self.stop_review();
+            self.markers = named_markers(&self.recording, &request.markers);
+            self.estimate_aimbot_fovs();
+        }
+        let first = f64::from(self.recording.first_tick());
+        let last = f64::from(self.recording.last_tick());
+        if let Some(tick) = request.tick {
+            let lead = DETECTION_LEAD_SECONDS / f64::from(self.recording.tick_interval);
+            self.seek((f64::from(tick) - lead).clamp(first, last));
+        }
+        if let Some(slot) = request.steam_id.and_then(|id| self.recording.slot_of_steam_id(id, self.tick)) {
+            self.camera_mode = CameraMode::Eyes(slot);
+        }
     }
 
     fn renderer_ready(&self) -> bool {
@@ -2071,13 +2200,12 @@ impl Session {
             }
             let position = Vec3::from(player.position);
             let lighting = self.lighting.at(position + Vec3::Z * 40.0);
-            let root = Mat4::from_translation(position) * Mat4::from_rotation_z(player.yaw.to_radians());
+            let root = Mat4::from_translation(position)
+                * Mat4::from_rotation_z(player.yaw.to_radians())
+                * Mat4::from_scale(Vec3::splat(player.size()));
             let skin = usize::from(player.team == TEAM_BLUE);
 
-            let body = characters
-                .classes
-                .get(usize::from(player.class))
-                .and_then(Option::as_ref);
+            let body = characters.body_of(&player);
             let Some(body) = body else {
                 let height = if player.is_ducking() { 0.74 } else { 1.0 };
                 shapes.push(ShapeInstance {
@@ -2431,6 +2559,9 @@ impl Session {
             if tick > self.tick {
                 break;
             }
+            if !self.traces_from(Some(shot.slot)) {
+                continue;
+            }
             let fade = (1.0 - (self.tick - tick) / window) as f32;
             // Size grows with distance so far marks stay visible.
             let size = (end.distance(camera.eye) * 0.006).clamp(2.0, 14.0);
@@ -2500,6 +2631,15 @@ impl Session {
         floats
     }
 
+    /// Whether traces from this player slot are shown: all of them, or only the watched
+    /// player's when that's asked for.
+    fn traces_from(&self, slot: Option<usize>) -> bool {
+        match self.watched_slot().filter(|_| self.traces_only_watched) {
+            Some(watched) => slot == Some(watched),
+            None => true,
+        }
+    }
+
     /// Recent hitscan shots as thin glowing strips that face the camera.
     fn traces(&self, camera: &Camera) -> Vec<f32> {
         let recording = &self.recording;
@@ -2507,6 +2647,9 @@ impl Session {
         let first = recording.shots.partition_point(|shot| f64::from(shot.tick) < self.tick - window);
         let mut floats = Vec::new();
         self.energy_glows(camera, &mut floats);
+        if self.show_sniper_dots {
+            self.sniper_dot_glows(camera, &mut floats);
+        }
         if self.show_projectiles {
             self.trail_strips(camera, &mut floats);
         }
@@ -2520,6 +2663,9 @@ impl Session {
             let tick = f64::from(shot.tick);
             if tick > self.tick {
                 break;
+            }
+            if !self.traces_from(Some(shot.slot)) {
+                continue;
             }
             let fade = (1.0 - (self.tick - tick) / window) as f32;
             let origin = Vec3::from(shot.origin);
@@ -2547,7 +2693,7 @@ impl Session {
         // Sentry fire: a line to what it hit, and a flash at the gun.
         let flash = MUZZLE_FLASH_SECONDS / f64::from(recording.tick_interval);
         let first = self.sentry_shots.partition_point(|shot| f64::from(shot.tick) < self.tick - window);
-        for shot in &self.sentry_shots[first..] {
+        for shot in self.sentry_shots[first..].iter().filter(|_| self.traces_from(None)) {
             let tick = f64::from(shot.tick);
             if tick > self.tick {
                 break;
@@ -2785,6 +2931,30 @@ impl Session {
         }
     }
 
+    /// Scoped Snipers' laser dots, in their team's colour, kept big enough to see from afar.
+    fn sniper_dot_glows(&self, camera: &Camera, floats: &mut Vec<f32>) {
+        let recording = &self.recording;
+        let (frame, next, t) = self.frames_around();
+        for dot in recording.dots_at(frame) {
+            let mut position = Vec3::from(dot.position);
+            if let Some(after) = recording.dot_of(next, usize::from(dot.slot)) {
+                let target = Vec3::from(after.position);
+                if position.distance(target) < SNIPER_DOT_JOIN {
+                    position = position.lerp(target, t);
+                }
+            }
+            let distance = camera.eye.distance(position);
+            if distance < 1.0 {
+                continue;
+            }
+            // Just off the wall it's on, towards the camera, so the wall doesn't hide it.
+            position += (camera.eye - position) / distance * SNIPER_DOT_LIFT.min(distance * 0.5);
+            let radius = (distance * SNIPER_DOT_SIZE).max(SNIPER_DOT_MIN_RADIUS);
+            push_glow(floats, position, radius, camera.eye, energy_color(dot.team), 0.9);
+            push_glow(floats, position, radius * 0.35, camera.eye, [1.0, 1.0, 1.0], 0.9);
+        }
+    }
+
     /// The last second of each projectile's flight, fading towards its oldest part.
     /// Once it explodes or lands, what's left fades away too.
     fn trail_strips(&self, camera: &Camera, floats: &mut Vec<f32>) {
@@ -2792,6 +2962,9 @@ impl Session {
         let window = TRAIL_SECONDS / interval;
         let last_started = self.trails.partition_point(|trail| f64::from(trail.first_tick()) <= self.tick);
         for trail in &self.trails[..last_started] {
+            if !self.traces_from((trail.owner != NO_OWNER).then_some(usize::from(trail.owner))) {
+                continue;
+            }
             let ended = f64::from(trail.last_tick());
             if ended + window < self.tick {
                 continue;
@@ -2854,7 +3027,7 @@ impl Session {
             if body.is_out_of_view() || !body.is_on_a_team() || recording.player(recording.frame_at(self.tick), slot).is_alive() {
                 continue;
             }
-            let Some(class) = self.characters.classes.get(usize::from(body.class)).and_then(Option::as_ref) else {
+            let Some(class) = self.characters.body_of(&body) else {
                 continue;
             };
             let special = if kill.backstab {
@@ -2868,9 +3041,16 @@ impl Session {
             };
             let seconds = recording.seconds_between(tick, self.tick) as f32;
             let position = Vec3::from(body.position);
-            let root = Mat4::from_translation(position) * Mat4::from_rotation_z(body.yaw.to_radians());
+            let root = Mat4::from_translation(position)
+                * Mat4::from_rotation_z(body.yaw.to_radians())
+                * Mat4::from_scale(Vec3::splat(body.size()));
             let skeleton = &class.rig.skeleton;
-            let ragdoll = if special.is_none() { self.ragdoll(index, kill, slot, &body, &class.rig) } else { None };
+            // Ragdolls are worked out at normal size, so giants and robots fall the usual way.
+            let ragdoll = if special.is_none() && body.size() == 1.0 && body.body_model == 0 {
+                self.ragdoll(index, kill, slot, &body, &class.rig)
+            } else {
+                None
+            };
             let world = match ragdoll {
                 Some(ragdoll) => ragdoll.world_matrices(skeleton, seconds),
                 None => {
@@ -3382,6 +3562,10 @@ impl Session {
         ui.checkbox(&mut self.show_projectiles, "Projectile trails")
             .on_hover_text("Trails behind rockets, pipes, stickies, flares, arrows and other projectiles");
         ui.checkbox(&mut self.show_impacts, "Bullet impacts").on_hover_text("A mark where each bullet hit");
+        let watching = self.watched_slot().is_some();
+        ui.add_enabled(watching, egui::Checkbox::new(&mut self.traces_only_watched, "Only the player you're watching"))
+            .on_hover_text("Bullets, impacts and projectile trails from the player you're watching, nobody else's")
+            .on_disabled_hover_text("Pick a player to watch first");
         ui.checkbox(&mut self.show_damage, "Damage numbers").on_hover_text(
             "How much damage each hit did, over the player who took it. When watching someone, only their own hits.",
         );
@@ -3391,10 +3575,17 @@ impl Session {
             .on_hover_text("A line from every player's eyes to where they look, through walls too");
         ui.checkbox(&mut self.show_aim_graph, "Aim graph")
             .on_hover_text("How fast the watched player's view turns, under the timeline. Snaps show as spikes.");
+        ui.checkbox(&mut self.show_sniper_dots, "Sniper dots").on_hover_text(
+            "The laser dot of every scoped Sniper. While it's there, their aim comes from it, which is far more \
+             exact than the angles the demo stores, so small aimbot flicks show.",
+        );
         ui.checkbox(&mut self.show_fov_circle, "Aimbot FOV circle").on_hover_text(
             "When watching a player with aim detections: a circle around the crosshair as big as the biggest \
              flick onto a target among them. Their aimbot reaches at least that far from the crosshair.",
         );
+        ui.separator();
+        ui.label(RichText::new("Review mode").small().color(MUTED));
+        self.review_settings(ui);
         ui.separator();
         ui.label(RichText::new("Hitboxes").small().color(MUTED));
         ui.checkbox(&mut self.show_hitboxes, "Hitboxes (H)")
@@ -3444,6 +3635,10 @@ impl Session {
             third_person: self.third_person,
             chase_distance: self.chase_distance,
             only_their_kills: self.only_their_kills,
+            sniper_dots: self.show_sniper_dots,
+            traces_only_watched: self.traces_only_watched,
+            review_slow_motion: self.review_slow_motion,
+            review_pause: self.review_pause,
         }
     }
 
@@ -3468,6 +3663,10 @@ impl Session {
         self.third_person = options.third_person;
         self.chase_distance = options.chase_distance;
         self.only_their_kills = options.only_their_kills;
+        self.show_sniper_dots = options.sniper_dots;
+        self.traces_only_watched = options.traces_only_watched;
+        self.review_slow_motion = options.review_slow_motion;
+        self.review_pause = options.review_pause;
     }
 
     /// Steps a clip recording forward: shows the next moment, then keeps the
@@ -3639,7 +3838,7 @@ impl Session {
 
         egui::TopBottomPanel::top("player_top").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Close player").clicked() {
+                if ui.button("Close demo").clicked() {
                     keep_open = false;
                 }
                 ui.separator();
@@ -3972,7 +4171,9 @@ impl Session {
         if let Some(slot) = self.recording.slot_of_steam_id(steam_id, tick) {
             self.camera_mode = CameraMode::Eyes(slot);
         }
-        self.speed_index = REVIEW_SPEED;
+        if self.review_slow_motion {
+            self.speed_index = REVIEW_SPEED;
+        }
         self.show_aim_lines = true;
         self.show_aim_graph = true;
         self.show_ghosts = ghosts_before || backtrack;
@@ -4015,6 +4216,7 @@ impl Session {
                 review.phase = ReviewPhase::Done;
                 review.wait_until = now + REVIEW_NEXT_SECONDS;
             }
+            ReviewPhase::LeadIn if self.tick >= moment && !self.review_pause => review.phase = ReviewPhase::Follow,
             ReviewPhase::LeadIn if self.tick >= moment => {
                 self.tick = moment;
                 self.playing = false;
@@ -4044,6 +4246,32 @@ impl Session {
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
 
+    /// Review mode's two settings, in the review bar and the Show menu.
+    fn review_settings(&mut self, ui: &mut egui::Ui) {
+        let slow = ui
+            .checkbox(&mut self.review_slow_motion, "Slow motion")
+            .on_hover_text("Plays each detection at 0.25x. Off, it plays at the speed you picked.");
+        if slow.changed() && self.review.is_some() {
+            if self.review_slow_motion {
+                self.speed_index = REVIEW_SPEED;
+            } else if let Some(review) = &self.review {
+                self.speed_index = review.before.speed_index;
+            }
+        }
+        let pause = ui
+            .checkbox(&mut self.review_pause, "Pause on each detection")
+            .on_hover_text("Stops for a moment on the tick it was flagged. Off, it plays straight through.");
+        // Turned off while paused on one: carry on.
+        if pause.changed() && !self.review_pause {
+            if let Some(review) = &mut self.review {
+                if review.phase == ReviewPhase::Hold {
+                    review.phase = ReviewPhase::Follow;
+                    self.playing = true;
+                }
+            }
+        }
+    }
+
     /// The bar over the view while reviewing: which detection this is, what the
     /// check looks for and what it measured.
     fn review_bar(&mut self, ui: &mut egui::Ui) {
@@ -4055,6 +4283,7 @@ impl Session {
         let name = review.name.clone();
         let mut auto_advance = review.auto_advance;
         let wait_left = (review.wait_until - ui.ctx().input(|input| input.time)).max(0.0);
+        let slow = self.review_slow_motion;
         let first = f64::from(self.recording.first_tick());
         let clock = format_clock(self.recording.seconds_between(first, f64::from(moment.tick)));
         let playing = self.playing;
@@ -4067,7 +4296,8 @@ impl Session {
             ui.label(RichText::new(format!("at {clock}")).color(MUTED));
             ui.separator();
             let (status, color) = match phase {
-                ReviewPhase::LeadIn => ("Slow motion up to the moment it was flagged".to_string(), MUTED),
+                ReviewPhase::LeadIn if slow => ("Slow motion up to the moment it was flagged".to_string(), MUTED),
+                ReviewPhase::LeadIn => ("Up to the moment it was flagged".to_string(), MUTED),
                 ReviewPhase::Hold => ("This is the moment it was flagged".to_string(), AMBER),
                 ReviewPhase::Follow => ("Playing on a little".to_string(), MUTED),
                 ReviewPhase::Done if index + 1 == count => ("That was the last one".to_string(), MUTED),
@@ -4090,6 +4320,8 @@ impl Session {
                 }
                 ui.checkbox(&mut auto_advance, "Go on by itself")
                     .on_hover_text("Moves on to the next detection a moment after each one ends");
+                ui.separator();
+                self.review_settings(ui);
             });
         });
         let recording = &self.recording;
@@ -4636,6 +4868,19 @@ impl Session {
                 painter.image(texture.id(), Rect::from_min_size(corner, quarter), uv, Color32::WHITE);
             }
         }
+        let exact = self.first_person_slot().is_some_and(|slot| {
+            Some(slot) != self.recording.recorder_slot
+                && self.recording.dot_of(self.recording.frame_at(self.tick), slot).is_some_and(|dot| dot.precise)
+        });
+        if exact {
+            painter.text(
+                Pos2::new(center.x, square.top() + 10.0),
+                Align2::CENTER_TOP,
+                "Exact aim from the sniper dot",
+                FontId::proportional(12.0),
+                Color32::from_rgb(140, 220, 140),
+            );
+        }
         // The crosshair.
         let line = Stroke::new(1.0_f32, Color32::BLACK);
         painter.line_segment([Pos2::new(square.left(), center.y), Pos2::new(square.right(), center.y)], line);
@@ -5041,6 +5286,7 @@ mod tests {
             max_health: 0,
             model: 0,
             animation: super::super::recording::ObjectAnimation::default(),
+            owner: super::super::recording::NO_OWNER,
         }
     }
 

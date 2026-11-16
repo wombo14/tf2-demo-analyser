@@ -74,7 +74,7 @@ The 3D player rebuilds the match from the demo and TF2's own files: the real map
 
 ![The 3D player watching a flagged Spy, with each part numbered](docs/images/player-overview.jpg)
 
-1. **Close player** goes back to the main window.
+1. **Close demo** closes this demo. Closing the last one goes back to the main window.
 2. The map, and who recorded the demo.
 3. **View** picks the player you watch, or the free camera. **First person** and **Third person** next to it choose between their eyes and a camera behind them.
 4. **Show...** turns the overlays on and off. See [The Show menu](#the-show-menu).
@@ -87,6 +87,16 @@ The 3D player rebuilds the match from the demo and TF2's own files: the real map
 11. The aim graph: how fast the watched player's view turns. Grey ticks are shots, yellow dots are hits, orange lines are detections.
 12. The timeline. Click or drag on it to jump. Each shaded band is a round, with a strip on top in the winning team's colour, and orange triangles are detections. Kills are ticks: red above the middle for kills by RED, blue below for kills by BLU. While you watch a player, it shows only their kills (above) and deaths (below) instead. Hover any mark to see what it is.
 13. **Play** or **Pause**, and skip 5 seconds back or forward.
+
+### Several demos at once
+
+Each demo opens in its own tab, in the bar above the player, so you can switch between demos without loading them again.
+
+- **← Analysis** goes back to the main window and keeps the demos open. **▶ 3D player (N demos)**, next to **Open...**, brings them back.
+- **Watch demo** in the main window adds the analysed demo as a new tab, with its detections. If that demo is already open, it goes to its tab instead.
+- **+ Open demo…**, or dropping .dem files on the player, opens more demos straight away, without detections.
+- Click a tab to switch, **Ctrl+Tab** for the next one, and **×** or a middle click to close one. The demo you leave pauses.
+- Up to 6 demos stay open. Opening a 7th closes the one opened longest ago.
 14. The time in the demo, and the tick.
 15. Playback speed, from 0.25x to 8x.
 16. **Save clip...** records a clip. See [Saving clips](#saving-clips).
