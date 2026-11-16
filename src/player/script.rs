@@ -159,6 +159,16 @@ impl Script {
                 modifiers: egui::Modifiers::NONE,
             }),
             Step::Shot(path) => {
+                // A minimized window has no pixels, and egui can't take a picture of it.
+                let hidden = ctx.input(|input| {
+                    input.viewport().minimized == Some(true)
+                        || input.viewport().inner_rect.is_some_and(|rect| rect.width() < 1.0 || rect.height() < 1.0)
+                });
+                if hidden {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    return;
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
                 self.shot = Some(path);
                 return;

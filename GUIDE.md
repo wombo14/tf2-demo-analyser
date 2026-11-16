@@ -96,15 +96,6 @@ The 3D player rebuilds the match from the demo and TF2's own files: the real map
 12. The timeline. Click or drag on it to jump. Each shaded band is a round, with a strip on top in the winning team's colour, and orange triangles are detections. Kills are ticks: red above the middle for kills by RED, blue below for kills by BLU. While you watch a player, it shows only their kills (above) and deaths (below) instead. Hover any mark to see what it is.
 13. **Play** or **Pause**, and skip 5 seconds back or forward.
 
-### Several demos at once
-
-Each demo opens in its own tab, in the bar above the player, so you can switch between demos without loading them again.
-
-- **← Analysis** goes back to the main window and keeps the demos open. **▶ 3D player (N demos)**, next to **Open...**, brings them back.
-- **Watch demo** in the main window adds the analysed demo as a new tab, with its detections. If that demo is already open, it goes to its tab instead.
-- **+ Open demo…**, or dropping .dem files on the player, opens more demos straight away, without detections.
-- Click a tab to switch, **Ctrl+Tab** for the next one, and **×** or a middle click to close one. The demo you leave pauses.
-- Up to 6 demos stay open. Opening a 7th closes the one opened longest ago.
 14. The time in the demo, and the tick.
 15. Playback speed, from 0.25x to 8x.
 16. **Save clip...** records a clip. See [Saving clips](#saving-clips).
@@ -112,6 +103,17 @@ Each demo opens in its own tab, in the bar above the player, so you can switch b
 18. **Only their kills and deaths** keeps the timeline to the watched player's own fights. Untick it to see every kill in the match.
 19. The tracked bar, when you watch a player: green while the demo has them alive, grey while it has them dead, and empty while they're out of the recorder's view. A demo recorded by a player only gets other players while they're near enough to matter to the recorder's game, so in the empty stretches they're frozen or missing. Jump to the green stretches to find their fights.
 20. **Sound** sets the volume; click the word or press M to mute. See [Sound](#sound).
+
+### Several demos at once
+
+Each demo opens in its own tab, in the bar above the player, so you can switch between demos without loading them again.
+
+- **← Analysis** goes back to the main window with the results of the demo you were watching, and keeps the demos open. **▶ 3D player (N demos)**, next to **Open...**, brings them back.
+- In the main window, **Open in the 3D player:** above the demo's name lists the open demos. Click one to see its results. A demo that was already scanned shows at once; one that wasn't is scanned first, and its detections then appear in the player too.
+- **Watch demo** in the main window adds the analysed demo as a new tab, with its detections. If that demo is already open, it goes to its tab instead.
+- **+ Open demo…**, or dropping .dem files on the player, opens more demos straight away. Their detections come when they're scanned: go back to **Analysis** from their tab, or click them in the main window's list.
+- Click a tab to switch, **Ctrl+Tab** for the next one, and **×** or a middle click to close one. The demo you leave pauses.
+- Up to 6 demos stay open. Opening a 7th closes the one opened longest ago.
 
 ## Controls
 

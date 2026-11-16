@@ -612,6 +612,12 @@ impl BulkAccountLookups {
     }
 }
 
+/// A scanned demo's results, kept while another demo is shown in the main window.
+struct AnalysedDemo {
+    analyser: Option<CheatAnalyser<'static>>,
+    detections: HashMap<u64, Vec<Detection>>,
+}
+
 /// Counters of a running (or finished) bulk scan, shared between the scan thread and the UI.
 #[derive(Default)]
 struct BulkScanProgress {
@@ -1132,6 +1138,9 @@ struct Gui {
 
     /// The built-in 3D player: the demos open in it, one tab each.
     player: PlayerTabs,
+    /// Scan results of demos open in the 3D player other than the one shown, so switching
+    /// between them in the main window is instant.
+    analysed_demos: HashMap<std::path::PathBuf, AnalysedDemo>,
     /// Scripted input for retaking the user guide's screenshots (DEMO_ANALYSIS_SCRIPT).
     script: Option<analysis_template::player::Script>,
 
@@ -1927,6 +1936,7 @@ impl Gui {
             hovered_player: None,
             reported_ids: initial_reported_ids,
             player: PlayerTabs::default(),
+            analysed_demos: HashMap::new(),
             script: analysis_template::player::Script::from_env(),
             copied_demo_feedback: None,
             copied_detections_feedback: None,
@@ -2053,6 +2063,14 @@ impl Gui {
     }
 
     fn select_demo(&mut self, path: std::path::PathBuf) {
+        // The demo being left keeps its results if it's open in the 3D player.
+        if let Some(previous) = self.file.take() {
+            if previous != path && (self.analyser.is_some() || !self.detections.is_empty()) && self.player.is_open(&previous) {
+                let analyser = self.analyser.take();
+                let detections = std::mem::take(&mut self.detections);
+                self.analysed_demos.insert(previous, AnalysedDemo { analyser, detections });
+            }
+        }
         self.file = Some(path.clone());
         self.analyser = None;
         self.detections.clear();
@@ -2801,9 +2819,8 @@ impl Gui {
         Some(LiveRescan::new(guard, hidden))
     }
 
-    /// Opens the loaded demo in the 3D player, marking every detection on its timeline.
-    fn open_player(&mut self, tick: Option<u32>, steam_id: Option<u64>) {
-        let Some(demo) = self.file.clone() else { return };
+    /// The shown demo's detections, as marks for the 3D player's timeline.
+    fn player_markers(&self) -> Vec<Marker> {
         let mut markers: Vec<Marker> = self
             .detections
             .values()
@@ -2817,7 +2834,34 @@ impl Gui {
             })
             .collect();
         markers.sort_by_key(|marker| marker.tick);
+        markers
+    }
+
+    /// Opens the loaded demo in the 3D player, marking every detection on its timeline.
+    fn open_player(&mut self, tick: Option<u32>, steam_id: Option<u64>) {
+        let Some(demo) = self.file.clone() else { return };
+        let markers = self.player_markers();
         self.player.open(OpenRequest { demo, tick, steam_id, markers });
+    }
+
+    /// Shows a demo's results in the main window: at once if it was scanned while open in
+    /// the 3D player, otherwise by scanning it.
+    fn show_demo_results(&mut self, demo: std::path::PathBuf, ctx: &egui::Context) {
+        if self.processing || self.file.as_ref() == Some(&demo) {
+            return;
+        }
+        let cached = self.analysed_demos.remove(&demo);
+        self.select_demo(demo.clone());
+        match cached {
+            Some(AnalysedDemo { analyser, detections }) => {
+                self.analyser = analyser;
+                self.detections = detections;
+                self.recording_date.request(&demo, &self.steam_api_key(), ctx);
+                self.integrity.request(&demo, ctx);
+                self.queue_account_checks(ctx);
+            }
+            None => self.analyse(ctx),
+        }
     }
 
     pub fn update_ui(&mut self, ctx: &egui::Context) {
@@ -2903,6 +2947,13 @@ impl Gui {
                             }
                             self.queue_account_checks(ctx);
                             analyser.print_detection_summary();
+                            // A demo open in the 3D player gets the new detections on its timeline.
+                            if let Some(demo) = self.file.clone() {
+                                if self.player.is_open(&demo) {
+                                    let markers = self.player_markers();
+                                    self.player.set_markers(&demo, markers);
+                                }
+                            }
                             #[cfg(feature = "rcon")]
                             if live_rescan {
                                 // The live scanner continues from this rescan; its scans that
@@ -4119,6 +4170,32 @@ impl Gui {
                 });
                 ui.add_space(4.0);
             }
+            if !self.player.is_empty() {
+                let mut pick = None;
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new("Open in the 3D player:").color(egui::Color32::GRAY));
+                    for (demo, _) in self.player.demos() {
+                        let name = demo.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        let shown = self.file.as_ref() == Some(&demo);
+                        let ready = self.analysed_demos.contains_key(&demo);
+                        let hint = if shown {
+                            "These are its results"
+                        } else if ready {
+                            "Show its results"
+                        } else {
+                            "Scan it and show its results"
+                        };
+                        let tab = ui.add_enabled(!self.processing || shown, egui::SelectableLabel::new(shown, name));
+                        if tab.on_hover_text(hint).clicked() && !shown {
+                            pick = Some(demo);
+                        }
+                    }
+                });
+                if let Some(demo) = pick {
+                    self.show_demo_results(demo, ui.ctx());
+                }
+                ui.add_space(2.0);
+            }
             if let Some(p) = &self.file {
                 let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                 // recording date: shown right-aligned on the file name row
@@ -4464,8 +4541,12 @@ impl eframe::App for Gui {
                         self.player.open(OpenRequest { demo, ..OpenRequest::default() });
                     }
                 }
+                PlayerRequest::ShowAnalysis(demo) => self.show_demo_results(demo, ctx),
             }
         }
+        // Results are only kept for demos still open in the player.
+        let player = &self.player;
+        self.analysed_demos.retain(|demo, _| player.is_open(demo));
         if showing {
             // TF2BD's dialogs draw over the player.
             self.tf2bd.poll(ctx);

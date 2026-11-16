@@ -61,6 +61,23 @@ impl PlayerTabs {
         self.tabs.get_mut(self.active)
     }
 
+    /// The demos open in the player, in tab order, and which one is on screen.
+    pub fn demos(&self) -> Vec<(PathBuf, bool)> {
+        self.tabs.iter().enumerate().map(|(index, tab)| (tab.demo().to_path_buf(), index == self.active)).collect()
+    }
+
+    /// Whether this demo is open in a tab.
+    pub fn is_open(&self, demo: &Path) -> bool {
+        self.tabs.iter().any(|tab| same_file(tab.demo(), demo))
+    }
+
+    /// Gives a demo's tab the detections of a newer scan, without switching to it.
+    pub fn set_markers(&mut self, demo: &Path, markers: Vec<super::view::Marker>) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| same_file(tab.demo(), demo)) {
+            tab.retarget(OpenRequest { demo: demo.to_path_buf(), markers, ..OpenRequest::default() });
+        }
+    }
+
     /// Opens a demo in a new tab and shows it. A demo that's already open gets its tab
     /// back, moved to the tick and player asked for, instead of loading it twice.
     pub fn open(&mut self, request: OpenRequest) {
@@ -106,7 +123,11 @@ impl PlayerTabs {
         egui::TopBottomPanel::top("player_tabs").show(ctx, |ui| {
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                if ui.button("← Analysis").on_hover_text("Back to the main window. The demos stay open here.").clicked() {
+                if ui
+                    .button("← Analysis")
+                    .on_hover_text("Back to the main window, with this demo's results. The demos stay open here.")
+                    .clicked()
+                {
                     action = Some(TabAction::Back);
                 }
                 ui.separator();
@@ -186,6 +207,9 @@ impl PlayerTabs {
             Some(TabAction::Back) => {
                 self.pause_active();
                 self.visible = false;
+                if let Some(tab) = self.tabs.get(self.active) {
+                    self.requests.push(PlayerRequest::ShowAnalysis(tab.demo().to_path_buf()));
+                }
             }
             Some(TabAction::Pick) => self.requests.push(PlayerRequest::PickDemo),
             _ => {}
