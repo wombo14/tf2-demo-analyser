@@ -23,7 +23,7 @@ use analysis_template::rcon::{
 #[cfg(feature = "tf2bd")]
 use analysis_template::{tf2bd::Tf2bdSettings, tf2bd_view::Tf2bdUi};
 use analysis_template::{debug_log, util::debug_log};
-use analysis_template::player::{DemoPlayer, Marker, OpenRequest, PlayerRequest};
+use analysis_template::player::{Marker, OpenRequest, PlayerRequest, PlayerTabs};
 
 /// The original project this version is built on, and the commit last merged from it.
 const UPSTREAM_REPO: &str = "Fidoo001/tf2-demo-analyser";
@@ -1130,8 +1130,8 @@ struct Gui {
     hovered_player: Option<u64>,
     reported_ids: HashSet<u64>,
 
-    /// The built-in 3D player, while it's open.
-    player: Option<DemoPlayer>,
+    /// The built-in 3D player: the demos open in it, one tab each.
+    player: PlayerTabs,
     /// Scripted input for retaking the user guide's screenshots (DEMO_ANALYSIS_SCRIPT).
     script: Option<analysis_template::player::Script>,
 
@@ -1924,7 +1924,7 @@ impl Gui {
             selected_detection: None,
             hovered_player: None,
             reported_ids: initial_reported_ids,
-            player: None,
+            player: PlayerTabs::default(),
             script: analysis_template::player::Script::from_env(),
             copied_demo_feedback: None,
             copied_detections_feedback: None,
@@ -2813,7 +2813,7 @@ impl Gui {
             })
             .collect();
         markers.sort_by_key(|marker| marker.tick);
-        self.player = Some(DemoPlayer::open(OpenRequest { demo, tick, steam_id, markers }));
+        self.player.open(OpenRequest { demo, tick, steam_id, markers });
     }
 
     pub fn update_ui(&mut self, ctx: &egui::Context) {
@@ -3704,6 +3704,16 @@ impl Gui {
                 ui.add_space(4.0);
             }
             ui.horizontal(|ui| {
+                if !self.player.is_empty() {
+                    let count = self.player.len();
+                    let back = ui
+                        .button(format!("▶ 3D player ({count} demo{})", if count == 1 { "" } else { "s" }))
+                        .on_hover_text("Back to the demos open in the 3D player");
+                    if back.clicked() {
+                        self.player.show_again();
+                    }
+                    ui.separator();
+                }
                 if ui.add_enabled(!self.processing, egui::Button::new("Open...")).clicked() {
                     if let Some(path) = rfd::FileDialog::new()
                         .add_filter("Demos", &["dem"])
@@ -4425,30 +4435,35 @@ impl eframe::App for Gui {
     }
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if let Some(player) = &mut self.player {
+        if self.player.is_visible() {
             let marks = self
                 .tf2bd
                 .tags()
                 .iter()
                 .map(|(steam_id, tag)| (*steam_id, (tag.label.clone(), tag.color)))
                 .collect();
-            player.set_marks(marks, self.tf2bd.enabled());
-            let keep_open = player.show(ctx);
-            for request in player.take_requests() {
-                match request {
-                    PlayerRequest::Mark { steam_id, name } => self.tf2bd.open_mark(steam_id, &name),
+            let can_mark = self.tf2bd.enabled();
+            if let Some(tab) = self.player.active_mut() {
+                tab.set_marks(marks, can_mark);
+            }
+        }
+        // Also runs while the player is hidden, to free the GPU data of closed tabs.
+        let showing = self.player.show(ctx, frame.gl().map(|gl| gl.as_ref()));
+        for request in self.player.take_requests() {
+            match request {
+                PlayerRequest::Mark { steam_id, name } => self.tf2bd.open_mark(steam_id, &name),
+                PlayerRequest::PickDemo => {
+                    if let Some(demo) = rfd::FileDialog::new().add_filter("Demos", &["dem"]).pick_file() {
+                        self.player.open(OpenRequest { demo, ..OpenRequest::default() });
+                    }
                 }
             }
-            if keep_open {
-                // TF2BD's dialogs draw over the player.
-                self.tf2bd.poll(ctx);
-                self.tf2bd.show(ctx);
-                return;
-            }
-            if let Some(gl) = frame.gl() {
-                player.destroy(gl);
-            }
-            self.player = None;
+        }
+        if showing {
+            // TF2BD's dialogs draw over the player.
+            self.tf2bd.poll(ctx);
+            self.tf2bd.show(ctx);
+            return;
         }
         self.update_ui(ctx);
     }

@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use glam::{Quat, Vec3};
 
+use tf_demo_parser::demo::sendprop::SendPropValue;
 use tf_demo_parser::demo::data::DemoTick;
 use tf_demo_parser::demo::gamevent::GameEvent;
 use tf_demo_parser::demo::header::Header;
@@ -114,6 +115,11 @@ pub struct PlayerFrame {
     /// Ping in milliseconds as the server measured it, the number TF2's scoreboard
     /// shows. The server updates it about once a second.
     pub ping: u16,
+    /// The player's own model, as an index into `Recording::models`, when it isn't
+    /// their class's usual one: Mann vs. Machine robots. Zero for the usual one.
+    pub body_model: u16,
+    /// How big they're drawn: 1.75 for a Mann vs. Machine giant. Zero means 1.
+    pub scale: f32,
 }
 
 impl PlayerFrame {
@@ -154,15 +160,22 @@ impl PlayerFrame {
     }
 
     /// How far above their feet this player's eyes are.
+    /// How big they're drawn, 1 for normal size.
+    pub fn size(&self) -> f32 {
+        if self.scale > 0.0 { self.scale } else { 1.0 }
+    }
+
     pub fn eye_height(&self) -> f32 {
-        if self.is_ducking() {
-            return 45.0;
-        }
-        match self.class {
-            1 => 65.0,
-            2 | 5 | 6 | 8 => 75.0,
-            _ => 68.0,
-        }
+        let height = if self.is_ducking() {
+            45.0
+        } else {
+            match self.class {
+                1 => 65.0,
+                2 | 5 | 6 | 8 => 75.0,
+                _ => 68.0,
+            }
+        };
+        height * self.size()
     }
 }
 
@@ -318,7 +331,12 @@ pub struct ObjectFrame {
     /// Index into `Recording::models`. Zero means unknown.
     pub model: u16,
     pub animation: ObjectAnimation,
+    /// The player slot that fired a projectile, `NO_OWNER` when unknown or not a projectile.
+    pub owner: u8,
 }
+
+/// `ObjectFrame::owner` when no player owns it.
+pub const NO_OWNER: u8 = u8::MAX;
 
 #[derive(Clone, Debug, Default)]
 pub struct SlotName {
@@ -469,6 +487,10 @@ pub struct Recording {
     /// Frame `f` owns `objects[object_offsets[f]..object_offsets[f + 1]]`.
     pub object_offsets: Vec<u32>,
     pub objects: Vec<ObjectFrame>,
+    /// Frame `f` owns `dots[dot_offsets[f]..dot_offsets[f + 1]]`.
+    pub dot_offsets: Vec<u32>,
+    /// Scoped Snipers' laser dots.
+    pub dots: Vec<SniperDot>,
     /// Model files the demo uses, starting with an empty entry for "no model".
     pub models: Vec<String>,
     pub props: Vec<PropTrack>,
@@ -495,6 +517,19 @@ impl Recording {
 
     pub fn player(&self, frame: usize, slot: usize) -> &PlayerFrame {
         &self.players[frame * self.slot_count + slot]
+    }
+
+    /// The sniper dots in a frame. Older recordings without them have none.
+    pub fn dots_at(&self, frame: usize) -> &[SniperDot] {
+        match (self.dot_offsets.get(frame), self.dot_offsets.get(frame + 1)) {
+            (Some(&start), Some(&end)) => &self.dots[start as usize..end as usize],
+            _ => &[],
+        }
+    }
+
+    /// A player's sniper dot in a frame.
+    pub fn dot_of(&self, frame: usize, slot: usize) -> Option<&SniperDot> {
+        self.dots_at(frame).iter().find(|dot| usize::from(dot.slot) == slot)
     }
 
     pub fn objects_at(&self, frame: usize) -> &[ObjectFrame] {
@@ -541,6 +576,46 @@ impl Recording {
     }
 }
 
+/// A scoped Sniper's laser dot: where the server's aim trace for them ends. Its place
+/// is sent to 1/32 of a unit, so the direction from their eyes to it is their aim far
+/// more exactly than the eye angles the demo stores for other players (0.35° of yaw,
+/// 0.7° of pitch), which hide the small flicks of a low FOV aimbot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SniperDot {
+    pub slot: u8,
+    pub team: u8,
+    pub position: [f32; 3],
+    /// The aim was taken from this dot: it moved recently and agrees with the eye angles.
+    pub precise: bool,
+}
+
+/// Each class's usual model, `models/player/<name>.mdl`, by class number.
+const CLASS_MODEL_NAMES: [&str; 10] = ["", "scout", "sniper", "soldier", "demo", "medic", "heavy", "pyro", "spy", "engineer"];
+
+/// A dot that's further than this from the eye angles' aim is stale or wrong.
+const DOT_AGREE_DEGREES: f32 = 4.0;
+/// A dot that hasn't moved for this long while its owner aims elsewhere is stale.
+const DOT_STALE_TICKS: u32 = 33;
+
+/// The pitch and yaw (TF2's way: pitch positive looking down) from an eye to a point.
+pub fn angles_towards(eye: Vec3, point: Vec3) -> Option<(f32, f32)> {
+    let to = point - eye;
+    let flat = to.truncate().length();
+    if to.length() < 1.0 {
+        return None;
+    }
+    Some(((-to.z).atan2(flat).to_degrees(), to.y.atan2(to.x).to_degrees()))
+}
+
+/// How far apart two aims are, in degrees.
+fn aim_difference((pitch_a, yaw_a): (f32, f32), (pitch_b, yaw_b): (f32, f32)) -> f32 {
+    let wrap = |angle: f32| (angle + 540.0).rem_euclid(360.0) - 180.0;
+    let normal = |pitch: f32| if pitch > 180.0 { pitch - 360.0 } else { pitch };
+    let pitch = normal(pitch_a) - normal(pitch_b);
+    let yaw = wrap(yaw_a - yaw_b) * normal(pitch_a).to_radians().cos().abs();
+    pitch.hypot(yaw)
+}
+
 /// `GameStateAnalyser` plus what it doesn't track: chat, the recording player's
 /// camera, and which entities dropped out of that player's view.
 #[derive(Default)]
@@ -557,6 +632,7 @@ struct Analyser {
     view_models: HashSet<EntityId>,
     props: HashSet<EntityId>,
     projectiles: HashSet<EntityId>,
+    sniper_dots: HashSet<EntityId>,
     class_kinds: HashMap<usize, EntityKind>,
     fields: HashMap<SendPropIdentifier, Field>,
     /// Shots seen so far: tick, shooter entity, origin, pitch, yaw, crit.
@@ -584,11 +660,14 @@ enum EntityKind {
     ViewModel,
     Prop,
     Projectile(ObjectKind),
+    SniperDot,
 }
 
 fn kind_of_class(name: &str) -> EntityKind {
     if name.contains("ViewModel") {
         EntityKind::ViewModel
+    } else if name == "CSniperDot" {
+        EntityKind::SniperDot
     } else if PROP_CLASSES.contains(&name) {
         EntityKind::Prop
     } else if let Some(kind) = ObjectKind::of_projectile_class(name) {
@@ -630,6 +709,16 @@ struct Entity {
     crit: bool,
     /// A pipebomb's type: 0 a pipe, 1 and 2 stickies, 3 a Loose Cannon ball.
     pipe_type: i64,
+    /// The tick its origin last changed.
+    moved: u32,
+    /// How big it's drawn (`m_flModelScale`).
+    scale: f32,
+    /// A player's own model instead of their class's (`m_iszCustomModel`, Mann vs.
+    /// Machine robots), as an index into the model precache. Zero for none.
+    custom_model: u32,
+    /// Who threw a grenade, pipe or sticky (`m_hThrower`), and what launched it.
+    thrower: i64,
+    launcher: i64,
 }
 
 impl Default for Entity {
@@ -659,6 +748,11 @@ impl Default for Entity {
             team: 0,
             crit: false,
             pipe_type: 0,
+            moved: 0,
+            scale: 1.0,
+            custom_model: 0,
+            thrower: -1,
+            launcher: -1,
         }
     }
 }
@@ -694,6 +788,10 @@ enum Field {
     Team,
     Critical,
     PipeType,
+    ModelScale,
+    CustomModel,
+    Thrower,
+    Launcher,
 }
 
 fn field_of(cache: &mut HashMap<SendPropIdentifier, Field>, identifier: SendPropIdentifier) -> Field {
@@ -716,6 +814,8 @@ fn field_of(cache: &mut HashMap<SendPropIdentifier, Field>, identifier: SendProp
             ("DT_TFProjectile_Pipebomb", "m_iType") => Field::PipeType,
             (_, "moveparent") => Field::Parent,
             (_, "m_hOwnerEntity") | ("DT_BaseViewModel", "m_hOwner") => Field::Owner,
+            (_, "m_hThrower") => Field::Thrower,
+            (_, "m_hLauncher") => Field::Launcher,
             (_, "m_nBody") => Field::Body,
             (_, "m_nSkin") => Field::Skin,
             (_, "m_nSequence") => Field::Sequence,
@@ -728,6 +828,8 @@ fn field_of(cache: &mut HashMap<SendPropIdentifier, Field>, identifier: SendProp
                 _ => Field::Ignored,
             },
             ("DT_BaseAnimating", "m_flPlaybackRate") => Field::PlaybackRate,
+            ("DT_BaseAnimating", "m_flModelScale") => Field::ModelScale,
+            (_, "m_iszCustomModel") => Field::CustomModel,
             ("DT_BaseObject", "m_flPercentageConstructed") => Field::Constructed,
             ("DT_ObjectSentrygun", "m_iAmmoShells") => Field::Shells,
             ("DT_ObjectSentrygun", "m_hEnemy") => Field::Enemy,
@@ -752,6 +854,7 @@ impl Analyser {
         self.view_models.remove(&id);
         self.props.remove(&id);
         self.projectiles.remove(&id);
+        self.sniper_dots.remove(&id);
     }
 
     /// Where an entity is in the world, following whatever it's attached to.
@@ -907,6 +1010,7 @@ impl MessageHandler for Analyser {
                                     EntityKind::ViewModel => self.view_models.insert(id),
                                     EntityKind::Prop => self.props.insert(id),
                                     EntityKind::Projectile(_) => self.projectiles.insert(id),
+                                    EntityKind::SniperDot => self.sniper_dots.insert(id),
                                     EntityKind::Other => false,
                                 };
                             }
@@ -919,10 +1023,27 @@ impl MessageHandler for Analyser {
                             continue;
                         }
                         let state = self.entities.entry(id).or_default();
+                        if field == Field::CustomModel {
+                            if let SendPropValue::String(path) = &prop.value {
+                                let wanted = path.replace('\\', "/").to_ascii_lowercase();
+                                state.custom_model = if wanted.is_empty() {
+                                    0
+                                } else {
+                                    self.precache
+                                        .iter()
+                                        .position(|known| known.replace('\\', "/").eq_ignore_ascii_case(&wanted))
+                                        .map_or(0, |index| index as u32)
+                                };
+                            }
+                            continue;
+                        }
                         if matches!(field, Field::Origin | Field::Angles) {
                             if let Ok(vector) = Vector::try_from(&prop.value) {
                                 let value = Vec3::new(vector.x, vector.y, vector.z);
                                 if field == Field::Origin {
+                                    if state.origin != Some(value) {
+                                        state.moved = u32::from(tick);
+                                    }
                                     state.origin = Some(value);
                                 } else {
                                     state.angles = value;
@@ -930,12 +1051,13 @@ impl MessageHandler for Analyser {
                             }
                             continue;
                         }
-                        if matches!(field, Field::Cycle | Field::PoseParameter(_) | Field::PlaybackRate | Field::Constructed) {
+                        if matches!(field, Field::Cycle | Field::PoseParameter(_) | Field::PlaybackRate | Field::Constructed | Field::ModelScale) {
                             let Ok(value) = f32::try_from(&prop.value) else { continue };
                             match field {
                                 Field::Cycle => state.cycle = Some(value),
                                 Field::PoseParameter(index) => state.pose_parameters[usize::from(index)] = value,
                                 Field::PlaybackRate => state.playback_rate = value,
+                                Field::ModelScale => state.scale = value,
                                 _ => state.constructed = Some(value),
                             }
                             continue;
@@ -948,6 +1070,8 @@ impl MessageHandler for Analyser {
                             Field::MovementFlags => state.flags = Some(value),
                             Field::Parent => state.parent = value,
                             Field::Owner => state.owner = value,
+                            Field::Thrower => state.thrower = value,
+                            Field::Launcher => state.launcher = value,
                             Field::Body => state.body = value,
                             Field::Skin => state.skin = value,
                             Field::Sequence => state.sequence = value,
@@ -965,7 +1089,9 @@ impl MessageHandler for Analyser {
                             | Field::Cycle
                             | Field::PoseParameter(_)
                             | Field::PlaybackRate
-                            | Field::Constructed => {}
+                            | Field::Constructed
+                            | Field::ModelScale
+                            | Field::CustomModel => {}
                         }
                     }
                 }
@@ -1138,6 +1264,8 @@ impl Recorder {
         recording.views.clear();
         recording.object_offsets.clear();
         recording.objects.clear();
+        recording.dot_offsets.clear();
+        recording.dots.clear();
         recording.props.clear();
         self.rows.clear();
         self.row_starts.clear();
@@ -1208,6 +1336,20 @@ impl Recorder {
         recording.views.push(view);
         row_starts.push(rows.len());
         recording.object_offsets.push(recording.objects.len() as u32);
+        recording.dot_offsets.push(recording.dots.len() as u32);
+
+        // Each owner's dot: the one that moved last, as a stale one can linger.
+        let mut dots: HashMap<EntityId, (u32, Vec3)> = HashMap::new();
+        for id in &analyser.sniper_dots {
+            if analyser.out_of_view.contains(id) {
+                continue;
+            }
+            let Some(dot) = analyser.entities.get(id) else { continue };
+            let (Some(owner), Some(origin)) = (handle_target(dot.owner), dot.origin) else { continue };
+            if dots.get(&owner).is_none_or(|(moved, _)| dot.moved > *moved) {
+                dots.insert(owner, (dot.moved, origin));
+            }
+        }
 
         for player in &state.players {
             let mut flags = 0;
@@ -1257,10 +1399,49 @@ impl Recorder {
                 weapon_model = intern_model(recording, model_ids, analyser, EntityId::from(index as u32));
             }
 
+            let mut aim = (player.pitch_angle, player.view_angle);
+            let dot = dots.get(&player.entity).filter(|_| flags & PLAYER_ALIVE != 0);
+            if let Some(&(moved, position)) = dot {
+                let probe = PlayerFrame { class: player.class as u8, flags, ..PlayerFrame::default() };
+                let eye = Vec3::new(player.position.x, player.position.y, player.position.z) + Vec3::Z * probe.eye_height();
+                let exact = angles_towards(eye, position)
+                    .filter(|exact| aim_difference(*exact, aim) < DOT_AGREE_DEGREES)
+                    .filter(|_| tick.saturating_sub(moved) < DOT_STALE_TICKS);
+                if let Some(exact) = exact {
+                    aim = exact;
+                }
+                recording.dots.push(SniperDot {
+                    slot: u8::try_from(rows.len() - row_starts.last().copied().unwrap_or(0)).unwrap_or(u8::MAX),
+                    team: player.team as u8,
+                    position: position.to_array(),
+                    precise: exact.is_some(),
+                });
+            }
+
+            // A model of their own instead of the class's (Mann vs. Machine robots).
+            let custom = state.map_or(0, |state| state.custom_model);
+            let body_model = if custom > 0 {
+                intern_index(recording, model_ids, analyser, custom)
+            } else {
+                0
+            };
+            let body_model = if body_model > 0 { body_model } else { state.filter(|state| state.model > 0).map_or(0, |_| {
+                let model = intern_model(recording, model_ids, analyser, player.entity);
+                let usual = CLASS_MODEL_NAMES.get(player.class as usize).filter(|name| !name.is_empty());
+                let path = &recording.models[usize::from(model)];
+                match usual {
+                    Some(name) if *path != format!("models/player/{name}.mdl") => model,
+                    _ => 0,
+                }
+            }) };
+            let scale = state.map_or(1.0, |state| state.scale);
+
             rows.push(PlayerFrame {
+                body_model,
+                scale,
                 position: [player.position.x, player.position.y, player.position.z],
-                yaw: player.view_angle,
-                pitch: player.pitch_angle,
+                yaw: aim.1,
+                pitch: aim.0,
                 health: clamp_health(player.health),
                 max_health: clamp_health(player.max_health),
                 team: player.team as u8,
@@ -1348,7 +1529,19 @@ impl Recorder {
                 (kind, _) => kind,
             };
             let model = intern_model(recording, model_ids, analyser, id);
+            // Grenades name their thrower, or at least the launcher, which its holder owns.
+            let launcher_owner = handle_target(entity.launcher)
+                .and_then(|launcher| analyser.entities.get(&launcher))
+                .and_then(|launcher| handle_target(launcher.owner));
+            let shooter = |id: EntityId| state.players.iter().position(|player| player.entity == id);
+            let owner = handle_target(entity.thrower)
+                .and_then(shooter)
+                .or_else(|| handle_target(entity.owner).and_then(shooter))
+                .or_else(|| launcher_owner.and_then(shooter))
+                .and_then(|slot| u8::try_from(slot).ok())
+                .unwrap_or(NO_OWNER);
             recording.objects.push(ObjectFrame {
+                owner,
                 id: u32::from(id) as u16,
                 kind,
                 team: entity.team,
@@ -1414,6 +1607,7 @@ impl Recorder {
                 max_health: clamp_health(building.max_health()),
                 model,
                 animation,
+                owner: NO_OWNER,
             });
         }
 
@@ -1435,6 +1629,7 @@ impl Recorder {
                     max_health: 0,
                     model: 0,
                     animation: ObjectAnimation::default(),
+                    owner: NO_OWNER,
                 });
             }
         }
@@ -1602,6 +1797,7 @@ impl Recorder {
         recording.players = players;
         recording.slot_count = slot_count;
         recording.object_offsets.push(recording.objects.len() as u32);
+        recording.dot_offsets.push(recording.dots.len() as u32);
         if recording.models.is_empty() {
             recording.models.push(String::new());
         }
@@ -1817,6 +2013,18 @@ mod tests {
         assert_eq!(track.keys_around(15.0).map(|(k, n)| (k.tick, n.map(|n| n.tick))), Some((10, Some(20))));
         assert_eq!(track.keys_around(25.0).map(|(k, n)| (k.tick, n.is_none())), Some((20, true)));
         assert!(track.keys_around(30.0).is_none());
+    }
+
+    #[test]
+    fn aim_towards_a_point() {
+        let eye = Vec3::new(0.0, 0.0, 100.0);
+        let (pitch, yaw) = angles_towards(eye, Vec3::new(100.0, 100.0, 100.0)).unwrap();
+        assert!(pitch.abs() < 1e-4 && (yaw - 45.0).abs() < 1e-4);
+        let (pitch, _) = angles_towards(eye, Vec3::new(100.0, 0.0, 0.0)).unwrap();
+        assert!((pitch - 45.0).abs() < 1e-4, "looking down is positive pitch");
+        assert!(aim_difference((0.0, 179.5), (0.0, -179.5)) < 1.01);
+        assert!(aim_difference((350.0, 10.0), (-10.0, 10.0)) < 1e-3);
+        assert!(aim_difference((0.0, 0.0), (0.0, 30.0)) > 29.0);
     }
 
     #[test]

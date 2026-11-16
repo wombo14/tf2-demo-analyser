@@ -203,6 +203,8 @@ pub struct DemoContent {
     pub sky_name: String,
     pub classes: Vec<u8>,
     pub models: Vec<String>,
+    /// Players' own models (Mann vs. Machine robots): class and index into `models`.
+    pub bodies: Vec<(u8, u16)>,
 }
 
 /// Lets anything in the world be lit according to where it stands.
@@ -1350,7 +1352,7 @@ pub fn load_map(
     let mut meshes = Vec::new();
     let characters = {
         let mut resolve = |assets: &Assets, name: &str| table.material(assets, name);
-        load_characters(&assets, &mut resolve, &content.classes, &model_paths, &mut meshes)
+        load_characters(&assets, &mut resolve, &content.classes, &content.bodies, &model_paths, &mut meshes)
     };
 
     // The scope multiplies the view by this image at double strength, so its dark

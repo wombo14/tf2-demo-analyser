@@ -4,8 +4,8 @@ DEMO ANALYSIS WITH 3D PLAYER - CHANGES
 This is a modified version of Demo Analysis by Fidoo001 and
 contributors (https://github.com/Fidoo001/tf2-demo-analyser), which is
 licensed under the GNU GPL version 3. This file lists everything this
-version changes compared with the original at commit cba8390
-(12 November 2026).
+version changes compared with the original at commit f9c3b26
+(14 November 2026).
 
 In short: it adds a built-in 3D demo player, so you can watch any
 detection without opening TF2. No detection check was added, removed or
@@ -29,6 +29,12 @@ Watching demos in 3D (new)
     scope when they zoom in. Or watch them in third person, from behind,
     and drag to swing the camera around them like spectating. Or fly a
     free camera.
+  - Several demos open at once, one tab each, above the player. Switch
+    with a click or Ctrl+Tab without loading them again; the one you
+    leave pauses. "Analysis" goes back to the main window and keeps
+    them open. Up to 6 stay open.
+  - Mann vs. Machine: robots have their robot models, and giants are
+    drawn at their real size, with hitboxes and eye height to match.
   - Animations come from TF2's own files: running, crouching, jumping,
     a pose for each weapon (picked from TF2's item list), aiming,
     shooting, melee swings, reloads and TF2's death animations. They
@@ -51,6 +57,11 @@ Seeing what a check saw (new, in the Show... menu)
     spike.
   - Aimbot FOV circle: for a flagged player, a circle around the
     crosshair as big as the biggest flick in their aim detections.
+  - Sniper dots: every scoped Sniper's laser dot. While it's there,
+    their aim is taken from it, which is exact, instead of the eye
+    angles the demo stores for other players (0.35 degrees of yaw and
+    0.7 of pitch), so the small flicks of a low FOV aimbot show.
+  - Traces from only the player you're watching, if you like.
 
 Sound (new)
   - The 3D player plays the match's sound from TF2's own sound files:
@@ -66,6 +77,7 @@ Review mode (new)
     then a little after. A bar says which check fired, what to look for
     on screen, and what the check measured in plain words (angles,
     distances, ticks, scores and the target's name).
+  - Slow motion and the pause on each detection can be turned off.
 
 Reporting (new)
   - Right-click a player in the 3D player to export an HTML report
@@ -93,8 +105,35 @@ Main window
 HISTORY (newest first)
 ----------------------
 
+16 November 2026
+  - Updated to Fidoo001's latest code (commit f9c3b26): Bulk scan in
+    the main window, an estimate of when a demo was recorded, a debug
+    mode (start with --debug to write a log), an updated doubletap
+    check, a new building aimbot check, and retrained aimbot and silent
+    aim models.
+  - Several demos open at once in the 3D player, one tab each. Watch
+    demo adds a tab (or goes back to the demo's tab if it's open), + Open
+    demo... and dropping .dem files on the player open more, Ctrl+Tab
+    switches, and Analysis goes back to the main window with the demos
+    kept. "Close player" is now "Close demo".
+  - Mann vs. Machine robots now have their robot models instead of the
+    normal class models, and giants are drawn at their real size, with
+    hitboxes and eye height to match.
+  - Scoped Snipers' laser dots are shown (Show... > Sniper dots), and
+    while a Sniper has one, their aim comes from the dot. It's exact,
+    unlike the rounded eye angles in demos, so small aimbot flicks now
+    show in their view, aim lines, aim graph and review. The scope says
+    when the aim comes from the dot.
+  - Review mode: Slow motion and Pause on each detection can be turned
+    off, in the review bar or Show... > Review mode.
+  - Show... > Traces > Only the player you're watching: bullets, impacts
+    and projectile trails from the watched player only.
+  - Pipes, stickies and other grenades now know who threw them (only
+    about half did before), so the trace filter includes them.
+  - Release pages now list what's new in each build.
+
 13 November 2026
-  - Updated to Fidoo001's latest code (commit cba8390): an updated
+  - Updated to Fidoo001's code at commit cba8390: an updated
     ml_triggerbot, speed improvements, bug fixes, new default settings
     and colours, steamid-ng from crates.io, and his own update notice.
     His notice is switched off here (CHECK_FIDOO001_RELEASES in gui.rs),

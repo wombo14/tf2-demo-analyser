@@ -15,7 +15,9 @@ mod report;
 mod review;
 mod script;
 mod skeleton;
+mod tabs;
 mod view;
 
 pub use script::Script;
+pub use tabs::{PlayerTabs, MAX_TABS};
 pub use view::{CameraMode, DemoPlayer, FreeCamera, GlowMode, Marker, OpenRequest, PlayerRequest, Session};

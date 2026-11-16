@@ -315,10 +315,39 @@ impl App {
                 "weapons at middle {:?}",
                 middle_frame.iter().map(|p| (p.weapon_slot, p.weapon_model, p.flags)).collect::<Vec<_>>()
             );
+            let mut held: Vec<u16> = middle_frame.iter().map(|p| p.weapon_model).filter(|&m| m != 0).collect();
+            held.sort_unstable();
+            held.dedup();
+            for model in held {
+                println!("weapon model {model}: {}", recording.models[usize::from(model)]);
+            }
         }
 
         if self.options.info {
             let recording = session.recording();
+            let mut bodies: Vec<(u8, u16, u32)> = recording
+                .players
+                .iter()
+                .filter(|player| player.body_model != 0 || player.size() != 1.0)
+                .map(|player| (player.class, player.body_model, (player.size() * 100.0) as u32))
+                .collect();
+            bodies.sort_unstable();
+            bodies.dedup();
+            for (class, model, size) in bodies {
+                println!("body class {class} size {size}% model {}", recording.models[usize::from(model)]);
+            }
+            let projectiles: Vec<_> = recording.objects.iter().filter(|object| !object.kind.is_building() && format!("{:?}", object.kind) != "Cart").collect();
+            let owned = projectiles.iter().filter(|object| object.owner != u8::MAX).count();
+            println!("projectile frames {} with a known shooter {owned}", projectiles.len());
+            let mut by_kind: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+            for object in &projectiles {
+                let entry = by_kind.entry(format!("{:?}", object.kind)).or_default();
+                entry.0 += 1;
+                entry.1 += usize::from(object.owner != u8::MAX);
+            }
+            println!("by kind (frames, with shooter): {by_kind:?}");
+            let robots = recording.models.iter().filter(|path| path.contains("bots/")).count();
+            println!("robot models in the list: {robots}");
             let frame = recording.frame_at(session.tick());
             let view = recording.views[frame];
             println!("view at start tick {}: {:?}", recording.ticks[frame], view);
@@ -359,6 +388,27 @@ impl App {
                 if player.is_alive() && !player.is_out_of_view() && player.class == 3 && found < 4 {
                     println!("state reload slot {} class {} at tick {}", anim.slot, player.class, anim.tick);
                     found += 1;
+                }
+            }
+        }
+        if self.options.find_state.as_deref() == Some("dot") {
+            // Scoped Snipers' dots: how many frames have one, and how many gave exact aim.
+            let recording = session.recording();
+            let total = recording.dots.len();
+            let precise = recording.dots.iter().filter(|dot| dot.precise).count();
+            println!("sniper dots: {total} in frames, {precise} gave exact aim");
+            let mut last = vec![0u32; recording.slot_count];
+            let mut found = 0;
+            for frame in 0..recording.ticks.len() {
+                for dot in recording.dots_at(frame) {
+                    let slot = usize::from(dot.slot);
+                    let tick = recording.ticks[frame];
+                    if dot.precise && found < 8 && slot < last.len() && tick > last[slot] + 2000 {
+                        last[slot] = tick;
+                        found += 1;
+                        let player = recording.player(frame, slot);
+                        println!("dot slot {slot} at tick {tick} at {:?} aim pitch {:.3} yaw {:.3}", dot.position, player.pitch, player.yaw);
+                    }
                 }
             }
         }
@@ -403,6 +453,16 @@ impl App {
             // Stand in front of the player and look back at them.
             let recording = session.recording();
             let player = *recording.player(recording.frame_at(session.tick()), slot);
+            println!(
+                "near player class {} weapon slot {} model {} {} body {} {} size {}",
+                player.class,
+                player.weapon_slot,
+                player.weapon_model,
+                recording.models[usize::from(player.weapon_model)],
+                player.body_model,
+                recording.models[usize::from(player.body_model)],
+                player.size()
+            );
             let around: f32 = std::env::var("DP_AROUND").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
             let yaw = (player.yaw + around).to_radians();
             let facing = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
@@ -428,6 +488,7 @@ impl App {
                 "nodamage" => session.show_damage = false,
                 "noimpacts" => session.show_impacts = false,
                 "nograph" => session.show_aim_graph = false,
+                "onlywatched" => session.traces_only_watched = true,
                 other => eprintln!("unknown --show item {other}"),
             }
         }
