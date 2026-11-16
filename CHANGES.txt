@@ -4,8 +4,8 @@ DEMO ANALYSIS WITH 3D PLAYER - CHANGES
 This is a modified version of Demo Analysis by Fidoo001 and
 contributors (https://github.com/Fidoo001/tf2-demo-analyser), which is
 licensed under the GNU GPL version 3. This file lists everything this
-version changes compared with the original at commit f9c3b26
-(14 November 2026).
+version changes compared with the original at commit 845ecc5
+(16 November 2026).
 
 In short: it adds a built-in 3D demo player, so you can watch any
 detection without opening TF2. No detection check was added, removed or
@@ -111,6 +111,10 @@ HISTORY (newest first)
 ----------------------
 
 16 November 2026, later
+  - Updated to Fidoo001's latest code (commit 845ecc5): retrained
+    autobackstab and plain projectile models, updated doubletap,
+    building aimbot and silent aim checks, and the ml_backtrack check
+    removed.
   - Demo integrity check, next to the demo's name in the main window:
     "No signs of editing", "Damaged or unusual" or "Looks edited", and a
     window saying what was found and where. It finds packets added or
