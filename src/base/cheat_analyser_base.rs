@@ -37,12 +37,8 @@ use crate::lib::algorithm_costs;
 use crate::util::helpers::reconstruct_simtick;
 use crate::dev_print;
 
-/// Stores new algorithm detections, first forwarding the flagged players to the live
-/// detection listener (set by the GUI only).
+/// Stores new algorithm detections.
 fn record_detections(all: &mut Vec<Detection>, new: Vec<Detection>) {
-    if !new.is_empty() {
-        crate::notify_detections(&new);
-    }
     all.extend(new);
 }
 
@@ -219,6 +215,10 @@ pub struct Sentry {
     pub health: u16,
     pub building: bool,
     pub sapped: bool,
+    /// Blueprint being placed by its engineer (follows them, not a real building yet)
+    pub placing: bool,
+    /// Picked up and carried by its engineer
+    pub carried: bool,
     pub team: Team,
     pub angle: f32,
     pub player_controlled: bool,
@@ -238,6 +238,10 @@ pub struct Dispenser {
     pub health: u16,
     pub building: bool,
     pub sapped: bool,
+    /// Blueprint being placed by its engineer (follows them, not a real building yet)
+    pub placing: bool,
+    /// Picked up and carried by its engineer
+    pub carried: bool,
     pub team: Team,
     pub angle: f32,
     pub healing: Vec<UserId>,
@@ -254,6 +258,10 @@ pub struct Teleporter {
     pub health: u16,
     pub building: bool,
     pub sapped: bool,
+    /// Blueprint being placed by its engineer (follows them, not a real building yet)
+    pub placing: bool,
+    /// Picked up and carried by its engineer
+    pub carried: bool,
     pub team: Team,
     pub angle: f32,
     pub is_entrance: bool,
@@ -351,6 +359,20 @@ impl Building {
             | Building::Dispenser(Dispenser { sapped, .. })
             | Building::Teleporter(Teleporter { sapped, .. }) => *sapped,
         }
+    }
+
+    /// Blueprint being placed or building carried by its engineer: it follows them around
+    pub fn placing_or_carried(&self) -> bool {
+        match self {
+            Building::Sentry(Sentry { placing, carried, .. })
+            | Building::Dispenser(Dispenser { placing, carried, .. })
+            | Building::Teleporter(Teleporter { placing, carried, .. }) => *placing || *carried,
+        }
+    }
+
+    /// Entity index of the engineer who built it (`m_hBuilder` is stored as the raw handle)
+    pub fn builder_entity_index(&self) -> u32 {
+        u32::from(u16::from(self.builder())) & 0x7FF
     }
 
     pub fn team(&self) -> Team {
@@ -1827,6 +1849,8 @@ impl<'a> CheatAnalyser<'a> {
         const MAX_HEALTH: SendPropIdentifier =
             SendPropIdentifier::new("DT_BaseObject", "m_iMaxHealth");
         const HEALTH: SendPropIdentifier = SendPropIdentifier::new("DT_BaseObject", "m_iHealth");
+        const PLACING: SendPropIdentifier = SendPropIdentifier::new("DT_BaseObject", "m_bPlacing");
+        const CARRIED: SendPropIdentifier = SendPropIdentifier::new("DT_BaseObject", "m_bCarried");
 
         match building {
             Building::Sentry(Sentry {
@@ -1837,6 +1861,8 @@ impl<'a> CheatAnalyser<'a> {
                 builder,
                 level,
                 building,
+                placing,
+                carried,
                 max_health,
                 health,
                 ..
@@ -1849,6 +1875,8 @@ impl<'a> CheatAnalyser<'a> {
                 builder,
                 level,
                 building,
+                placing,
+                carried,
                 max_health,
                 health,
                 ..
@@ -1861,6 +1889,8 @@ impl<'a> CheatAnalyser<'a> {
                 builder,
                 level,
                 building,
+                placing,
+                carried,
                 max_health,
                 health,
                 ..
@@ -1874,6 +1904,8 @@ impl<'a> CheatAnalyser<'a> {
                         ANGLE => *angle = f32::try_from(&prop.value).unwrap_or_default(),
                         SAPPED => *sapped = i64::try_from(&prop.value).unwrap_or_default() > 0,
                         BUILDING => *building = i64::try_from(&prop.value).unwrap_or_default() > 0,
+                        PLACING => *placing = i64::try_from(&prop.value).unwrap_or_default() > 0,
+                        CARRIED => *carried = i64::try_from(&prop.value).unwrap_or_default() > 0,
                         LEVEL => *level = i64::try_from(&prop.value).unwrap_or_default() as u8,
                         BUILDER => {
                             *builder =
