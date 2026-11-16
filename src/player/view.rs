@@ -1120,6 +1120,8 @@ pub enum PlayerRequest {
     Mark { steam_id: u64, name: String },
     /// Ask which demo to open in a new tab.
     PickDemo,
+    /// "Analysis" was pressed while watching this demo: show its results.
+    ShowAnalysis(std::path::PathBuf),
 }
 
 /// What to open and where to start.

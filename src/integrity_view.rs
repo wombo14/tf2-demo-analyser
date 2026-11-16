@@ -19,6 +19,8 @@ pub struct IntegrityView {
     send: Sender<(PathBuf, Result<Report, String>)>,
     results: Receiver<(PathBuf, Result<Report, String>)>,
     window_open: bool,
+    /// Finished checks, so switching back to a demo shows its result at once.
+    cache: std::collections::HashMap<PathBuf, Result<Report, String>>,
 }
 
 impl Default for IntegrityView {
@@ -38,12 +40,16 @@ fn color(severity: Option<Severity>) -> Color32 {
 impl IntegrityView {
     pub fn new() -> Self {
         let (send, results) = channel();
-        Self { current: None, send, results, window_open: false }
+        Self { current: None, send, results, window_open: false, cache: std::collections::HashMap::new() }
     }
 
     /// Checks a demo in the background. The result replaces the shown one when it's ready.
     pub fn request(&mut self, path: &std::path::Path, ctx: &egui::Context) {
         if self.current.as_ref().is_some_and(|(shown, result)| shown == path && result.is_some()) {
+            return;
+        }
+        if let Some(done) = self.cache.get(path) {
+            self.current = Some((path.to_path_buf(), Some(done.clone())));
             return;
         }
         self.current = Some((path.to_path_buf(), None));
@@ -61,6 +67,9 @@ impl IntegrityView {
 
     fn poll(&mut self) {
         while let Ok((path, result)) = self.results.try_recv() {
+            if result.is_ok() {
+                self.cache.insert(path.clone(), result.clone());
+            }
             if let Some((shown, slot)) = &mut self.current {
                 if *shown == path {
                     *slot = Some(result);

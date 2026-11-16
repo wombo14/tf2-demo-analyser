@@ -110,6 +110,14 @@ Main window
 HISTORY (newest first)
 ----------------------
 
+16 November 2026, evening
+  - The main window follows the 3D player's demos. "Open in the 3D
+    player:" above the demo's name lists them; click one to see its
+    results, at once if it was scanned already. "Analysis" in the player
+    shows the results of the demo you were watching, scanning it first
+    if needed, and a demo opened in the player without detections gets
+    them once it's scanned.
+
 16 November 2026, later
   - Updated to Fidoo001's latest code (commit 845ecc5): retrained
     autobackstab and plain projectile models, updated doubletap,
