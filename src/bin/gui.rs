@@ -27,7 +27,7 @@ use analysis_template::player::{Marker, OpenRequest, PlayerRequest, PlayerTabs};
 
 /// The original project this version is built on, and the commit last merged from it.
 const UPSTREAM_REPO: &str = "Fidoo001/tf2-demo-analyser";
-const UPSTREAM_MERGED: &str = "f9c3b26d317c6695a8f5cbab7f15d1cae12d292d";
+const UPSTREAM_MERGED: &str = "845ecc52d27fd58f2c0526be067eaec8af387bb2";
 
 /// Whether to show Fidoo001's own "Update available" for his releases. Off in this
 /// version: its releases come from `RELEASES_REPO`, and his builds don't have the 3D player.
@@ -1144,6 +1144,8 @@ struct Gui {
     voice_export_feedback: Option<(std::time::Instant, Result<analysis_template::util::voice::VoiceExportSummary, String>)>,
     // recording date
     recording_date: analysis_template::recording_date_view::RecordingDateView,
+    /// Whether the analysed demo looks edited or cut.
+    integrity: analysis_template::integrity_view::IntegrityView,
     show_delete_replays_prompt: bool,
     bulk_scan: BulkScanUi,
     save_feedback: Option<(std::time::Instant, Result<(), String>)>,
@@ -1935,6 +1937,7 @@ impl Gui {
             voice_export_feedback: None,
             // recording date
             recording_date: analysis_template::recording_date_view::RecordingDateView::new(),
+            integrity: analysis_template::integrity_view::IntegrityView::new(),
             show_delete_replays_prompt: false,
             bulk_scan: BulkScanUi::new(),
             save_feedback: None,
@@ -2748,6 +2751,7 @@ impl Gui {
         let file = self.file.clone().unwrap();
         // recording date
         self.recording_date.request(&file, &self.steam_api_key(), ctx);
+        self.integrity.request(&file, ctx);
         let send = self.send.clone();
         analysis_template::reset_progress(1);
         analysis_template::CANCEL_ANALYSIS.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -4122,6 +4126,8 @@ impl Gui {
                 let width = (right_edge - ui.cursor().min.x).max(50.0);
                 ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.heading(name);
+                    ui.add_space(8.0);
+                    self.integrity.show(ui, self.file.as_deref());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         self.recording_date.show(ui);
                     });
@@ -4334,6 +4340,7 @@ impl Gui {
 
         // Render sub-windows
         self.header_window.ui(ctx);
+        self.integrity.window(ctx);
         #[cfg(feature = "tf2bd")]
         let (tags, can_mark) = (self.tf2bd.tags(), self.tf2bd.enabled());
         #[cfg(not(feature = "tf2bd"))]

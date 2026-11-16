@@ -19,6 +19,9 @@ pub mod tf2bd_view;
 // Recording date estimate shown in the GUI (logic in `lib::recording_date`)
 #[cfg(feature = "gui")]
 pub mod recording_date_view;
+// Demo integrity badge and window (logic in `util::integrity`)
+#[cfg(feature = "gui")]
+pub mod integrity_view;
 
 
 pub mod algorithms {
@@ -37,6 +40,7 @@ pub mod util {
     pub mod debug_log;
     pub mod diagnostics;
     pub mod helpers;
+    pub mod integrity;
     pub mod schema_equip_regions;
     #[cfg(any(feature = "experimental", feature = "player"))]
     pub mod voice;

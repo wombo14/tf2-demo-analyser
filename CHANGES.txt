@@ -4,8 +4,8 @@ DEMO ANALYSIS WITH 3D PLAYER - CHANGES
 This is a modified version of Demo Analysis by Fidoo001 and
 contributors (https://github.com/Fidoo001/tf2-demo-analyser), which is
 licensed under the GNU GPL version 3. This file lists everything this
-version changes compared with the original at commit f9c3b26
-(14 November 2026).
+version changes compared with the original at commit 845ecc5
+(16 November 2026).
 
 In short: it adds a built-in 3D demo player, so you can watch any
 detection without opening TF2. No detection check was added, removed or
@@ -88,6 +88,11 @@ Reporting (new)
     an MP4 (needs ffmpeg) or a GIF.
 
 Main window
+  - Demo integrity: next to the demo's name, whether it looks edited or
+    cut, with the details a click away. It compares the header with the
+    content, checks that ticks and packet numbers only count up, and
+    follows the server's own clock inside every packet, which shows a
+    cut-out stretch even when everything else was renumbered.
   - The TF2BD Community Biglist and TF2BD Trusted lists are the default
     TF2BD playerlists. Configure playerlists has buttons to add them
     back if you remove them.
@@ -104,6 +109,21 @@ Main window
 
 HISTORY (newest first)
 ----------------------
+
+16 November 2026, later
+  - Updated to Fidoo001's latest code (commit 845ecc5): retrained
+    autobackstab and plain projectile models, updated doubletap,
+    building aimbot and silent aim checks, and the ml_backtrack check
+    removed.
+  - Demo integrity check, next to the demo's name in the main window:
+    "No signs of editing", "Damaged or unusual" or "Looks edited", and a
+    window saying what was found and where. It finds packets added or
+    removed, headers changed, recordings joined or reordered, the end cut
+    off, and stretches cut out of the middle even when the rest was
+    renumbered and the header fixed (from the server's clock, which
+    keeps in step with the demo). Tested on 57 real demos, none flagged,
+    and on edited copies of them, all caught, down to a 3-second cut.
+    TF2 demos aren't signed, so it can't prove a demo is genuine.
 
 16 November 2026
   - Updated to Fidoo001's latest code (commit f9c3b26): Bulk scan in

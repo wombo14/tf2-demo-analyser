@@ -8,7 +8,7 @@ is a date line, then "  - " items whose text continues on lines indented by four
 import re
 import sys
 
-DATE = re.compile(r"^\d{1,2} [A-Z][a-z]+ \d{4}\.?$")
+DATE = re.compile(r"^\d{1,2} [A-Z][a-z]+ \d{4}\b")
 
 
 def newest_entry(text):

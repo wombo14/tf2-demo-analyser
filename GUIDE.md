@@ -62,6 +62,14 @@ The main window picks which checks run, scans the demo and lists every flagged p
 
 ![The Playerlist window: everyone in the demo by team](docs/images/main-playerlist.png)
 
+**Demo integrity.** Next to the demo's name, after a scan, it says whether the demo looks edited: **✓ No signs of editing**, **⚠ Damaged or unusual** (cut short, or partly unreadable, which a crash or a failed download also causes) or **✗ Looks edited**. Click it to see what was found and where. TF2 demos aren't signed, so nothing can prove a demo is genuine; this checks what editing usually breaks:
+
+- the header's packet count, tick count and length against what's really in the file,
+- the demo's ticks and packet numbers, which only ever count up (joined or reordered recordings go backwards),
+- the server's own clock, which is inside every packet and keeps in step with the demo. Cutting part of a match out makes it jump ahead, even when the editor renumbered everything after the cut and fixed the header.
+
+Lag makes demos jump too, but differently, so lag is not mistaken for a cut: none of 57 real demos was flagged, while every test edit was, down to a 3-second cut.
+
 Right-click a flagged player for more: view them in the playerlist, copy their SteamHistory link, Steam profile link, SteamID or in-game name, or mark them in your TF2BD lists. Double-click a SteamID to open the Steam profile.
 
 ![Right-clicking a flagged player in the main window](docs/images/main-right-click.png)
