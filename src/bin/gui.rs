@@ -27,7 +27,7 @@ use analysis_template::player::{Marker, OpenRequest, PlayerRequest, PlayerTabs};
 
 /// The original project this version is built on, and the commit last merged from it.
 const UPSTREAM_REPO: &str = "Fidoo001/tf2-demo-analyser";
-const UPSTREAM_MERGED: &str = "845ecc52d27fd58f2c0526be067eaec8af387bb2";
+const UPSTREAM_MERGED: &str = "59c0a93479abf4b5811666f82442b596e1543763";
 
 /// Whether to show Fidoo001's own "Update available" for his releases. Off in this
 /// version: its releases come from `RELEASES_REPO`, and his builds don't have the 3D player.
