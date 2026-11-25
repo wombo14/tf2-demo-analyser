@@ -933,6 +933,22 @@ fn write_lightmap(
     }
 }
 
+/// The names of the brushes `func_areaportalwindow`s use as their stand-in. TF2
+/// fades one in only from far away, in place of the room behind the window, so up
+/// close it's invisible. The 3D player draws the room at every distance, so it
+/// never draws these. Entity names in Source ignore case.
+fn portal_window_brushes(targets: impl IntoIterator<Item = String>) -> std::collections::HashSet<String> {
+    targets
+        .into_iter()
+        .map(|target| target.trim().to_ascii_lowercase())
+        .filter(|target| !target.is_empty())
+        .collect()
+}
+
+fn is_portal_window_brush(targetname: Option<&str>, portal_windows: &std::collections::HashSet<String>) -> bool {
+    targetname.is_some_and(|name| portal_windows.contains(&name.trim().to_ascii_lowercase()))
+}
+
 fn build_world(
     bsp: &Bsp,
     assets: &Assets,
@@ -945,6 +961,12 @@ fn build_world(
     let ldr = lumps.get(LUMP_LIGHTING);
     let lighting = if ldr.is_empty() { lumps.get(LUMP_LIGHTING_HDR) } else { ldr };
 
+    let portal_windows = portal_window_brushes(
+        bsp.entities
+            .iter()
+            .filter(|entity| entity.prop("classname").is_some_and(|class| class.eq_ignore_ascii_case("func_areaportalwindow")))
+            .filter_map(|entity| entity.prop("target").map(str::to_string)),
+    );
     let mut models: Vec<(usize, Vec3)> = vec![(0, Vec3::ZERO)];
     for entity in bsp.entities.iter() {
         let class = entity.prop("classname").unwrap_or_default();
@@ -953,6 +975,9 @@ fn build_world(
         }
         // Render mode 10 means "don't draw", which maps use for hidden doors and blockers.
         if entity.prop("rendermode").and_then(|mode| mode.trim().parse::<i32>().ok()) == Some(RENDER_MODE_NONE) {
+            continue;
+        }
+        if is_portal_window_brush(entity.prop("targetname"), &portal_windows) {
             continue;
         }
         let index = entity
@@ -1459,6 +1484,16 @@ mod tests {
         assert_eq!(color_from_rgbe(&[255, 0, 0, 0]), [1.0, 0.0, 0.0]);
         assert_eq!(color_from_rgbe(&[255, 0, 0, 1]), [2.0, 0.0, 0.0]);
         assert_eq!(color_from_rgbe(&[255, 0, 0, 0xFF]), [0.5, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn area_portal_window_brushes_are_found_by_name_ignoring_case() {
+        let windows = portal_window_brushes(["Door_Fade ".to_string(), String::new()]);
+        assert_eq!(windows.len(), 1);
+        assert!(is_portal_window_brush(Some("door_fade"), &windows));
+        assert!(is_portal_window_brush(Some("DOOR_FADE"), &windows));
+        assert!(!is_portal_window_brush(Some("door"), &windows));
+        assert!(!is_portal_window_brush(None, &windows));
     }
 
     #[test]

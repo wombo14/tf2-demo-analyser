@@ -4,8 +4,8 @@ DEMO ANALYSIS WITH 3D PLAYER - CHANGES
 This is a modified version of Demo Analysis by Fidoo001 and
 contributors (https://github.com/Fidoo001/tf2-demo-analyser), which is
 licensed under the GNU GPL version 3. This file lists everything this
-version changes compared with the original at commit 845ecc5
-(16 November 2026).
+version changes compared with the original at commit 1329245
+(25 November 2026).
 
 In short: it adds a built-in 3D demo player, so you can watch any
 detection without opening TF2. No detection check was added, removed or
@@ -109,6 +109,24 @@ Main window
 
 HISTORY (newest first)
 ----------------------
+
+25 November 2026
+  - Updated to Fidoo001's latest code (commit 1329245): retrained ML
+    models, improved aimbot, ml_aimbot, plain projectile, nospread,
+    sniperaim, bunnyhop, duckspeed, doubletap and silent aim checks,
+    the ml_triggerbot check removed, demos opened straight from zip,
+    7z, rar and tar archives, a reset parameters button, and changed
+    bulk scan behaviour.
+  - 3D player: the stand-in brushes of area portal windows
+    (func_areaportalwindow) are no longer drawn. TF2 only fades them in
+    from far away, so doorways and windows they cover were shown
+    blocked.
+  - 3D player: fixed the Demoman's feet, which were drawn as one jagged
+    slab, and his grenade bandolier, which was a jagged mess. Model
+    parts that can be swapped out (shoes, grenades, the Soldier's
+    helmet) were paired with the wrong triangles, because the model
+    reading library (vmdl) misread the second option of every
+    swappable part. A fixed copy of it is in vendor/vmdl.
 
 16 November 2026, evening
   - The main window follows the 3D player's demos. "Open in the 3D

@@ -1,6 +1,6 @@
 [package]
 name = "analysis-template"
-version = "1.7.0"
+version = "1.8.0"
 edition = "2021"
 default-run = "cli"
 
@@ -43,6 +43,13 @@ web-time = "1.1.0"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 lzma-rs = "0.3"
 snap = "1.1"
+zip = { version = "9.8", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64", "bzip2", "lzma", "ppmd", "xz"] }
+sevenz-rust2 = { version = "0.25", default-features = false, features = ["aes256", "bzip2", "deflate", "ppmd", "util"] }
+unrar-rs = { version = "0.16", default-features = false, features = ["crypto-rust"] }
+tar = "0.4"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+bzip2 = "0.6"
+lzma-rust2 = { version = "0.25", default-features = false, features = ["std", "optimization"] }
 
 eframe = { version = "0.31.1", optional = true }
 egui = { version = "0.31.1", optional = true }
@@ -79,8 +86,13 @@ required-features = [ "player" ]
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
 
+[dev-dependencies]
+sevenz-rust2 = { version = "0.25", default-features = false, features = ["compress"] }
+
 [patch.crates-io]
 # steamid-ng 3.0 from crates.io is used; the old patched 1.0 copy is kept in vendor/steamid-ng as a backup.
 # steamid-ng = { path = "vendor/steamid-ng" }
 tf-demo-parser = { path = "vendor/tf-demo-parser" }
+# vmdl 0.2.0 with body group options read the right distance apart; see vendor/vmdl/Cargo.toml.
+vmdl = { path = "vendor/vmdl" }
 
