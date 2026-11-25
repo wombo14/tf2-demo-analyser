@@ -83,6 +83,12 @@ const PROP_CLASSES: [&str; 14] = [
     "CItem",
 ];
 
+/// Entity classes for the map's moving brushes: doors (sliding and swinging),
+/// trains and spinning parts. TF2 sends func_movelinear, func_brush and the
+/// like as plain CBaseEntity, which covers pieces riding on a door too. Only
+/// the ones whose model is one of the map's brushes (`*N`) are followed.
+const MOVER_CLASSES: [&str; 4] = ["CBaseDoor", "CFuncTrackTrain", "CFuncRotating", "CBaseEntity"];
+
 /// Long demos are sampled more sparsely so one file can't exhaust memory.
 const MAX_FRAMES: u32 = 150_000;
 const DEFAULT_TICK_INTERVAL: f32 = 0.015;
@@ -227,6 +233,57 @@ impl PropTrack {
         let after = self.keys.partition_point(|key| f64::from(key.tick) <= tick);
         let current = self.keys.get(after.checked_sub(1)?)?;
         Some((current, self.keys.get(after)))
+    }
+}
+
+/// Where a moving part of the map was at one tick.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MoverKey {
+    pub tick: u32,
+    pub position: [f32; 3],
+    pub rotation: [f32; 4],
+}
+
+/// A part of the map built from its own brushes that moves, like a door or a
+/// lift, and where it was over the demo. The map draws it; this says where.
+#[derive(Clone, Debug)]
+pub struct MoverTrack {
+    /// The map's brush model it is, the `N` of `*N`.
+    pub brush: u16,
+    pub keys: Vec<MoverKey>,
+}
+
+impl MoverTrack {
+    /// Where it is at a tick, gliding between keys, and staying put before the
+    /// first and after the last. None before the demo first shows it, when it
+    /// stays where the map put it.
+    pub fn at(&self, tick: f64) -> Option<(Vec3, Quat)> {
+        let after = self.keys.partition_point(|key| f64::from(key.tick) <= tick);
+        let current = self.keys.get(after.checked_sub(1)?)?;
+        let (position, rotation) = (Vec3::from(current.position), Quat::from_array(current.rotation));
+        let Some(next) = self.keys.get(after) else { return Some((position, rotation)) };
+        let span = f64::from(next.tick) - f64::from(current.tick);
+        let t = if span > 0.0 { ((tick - f64::from(current.tick)) / span).clamp(0.0, 1.0) as f32 } else { 1.0 };
+        Some((position.lerp(Vec3::from(next.position), t), rotation.slerp(Quat::from_array(next.rotation), t)))
+    }
+
+    /// Adds where it is now. It only gets a key when it has moved, so before a
+    /// move it first gets one where it sat until `last_seen`; without it, it
+    /// would seem to creep all the way from its previous move.
+    fn push(&mut self, key: MoverKey, last_seen: u32) {
+        let Some(last) = self.keys.last().copied() else {
+            self.keys.push(key);
+            return;
+        };
+        let moved = Vec3::from(last.position).distance(Vec3::from(key.position)) > PROP_MOVE_EPSILON;
+        let turned = Quat::from_array(last.rotation).dot(Quat::from_array(key.rotation)).abs() < 1.0 - PROP_TURN_EPSILON;
+        if !moved && !turned {
+            return;
+        }
+        if last.tick < last_seen && last_seen < key.tick {
+            self.keys.push(MoverKey { tick: last_seen, ..last });
+        }
+        self.keys.push(key);
     }
 }
 
@@ -494,6 +551,8 @@ pub struct Recording {
     /// Model files the demo uses, starting with an empty entry for "no model".
     pub models: Vec<String>,
     pub props: Vec<PropTrack>,
+    /// Doors and other moving parts of the map, one track per brush model.
+    pub movers: Vec<MoverTrack>,
 }
 
 impl Recording {
@@ -631,6 +690,7 @@ struct Analyser {
     entities: HashMap<EntityId, Entity>,
     view_models: HashSet<EntityId>,
     props: HashSet<EntityId>,
+    movers: HashSet<EntityId>,
     projectiles: HashSet<EntityId>,
     sniper_dots: HashSet<EntityId>,
     class_kinds: HashMap<usize, EntityKind>,
@@ -659,6 +719,8 @@ enum EntityKind {
     Other,
     ViewModel,
     Prop,
+    /// A moving part of the map made of its brushes, like a door.
+    Mover,
     Projectile(ObjectKind),
     SniperDot,
 }
@@ -670,6 +732,8 @@ fn kind_of_class(name: &str) -> EntityKind {
         EntityKind::SniperDot
     } else if PROP_CLASSES.contains(&name) {
         EntityKind::Prop
+    } else if MOVER_CLASSES.contains(&name) {
+        EntityKind::Mover
     } else if let Some(kind) = ObjectKind::of_projectile_class(name) {
         EntityKind::Projectile(kind)
     } else {
@@ -853,6 +917,7 @@ impl Analyser {
         self.entities.remove(&id);
         self.view_models.remove(&id);
         self.props.remove(&id);
+        self.movers.remove(&id);
         self.projectiles.remove(&id);
         self.sniper_dots.remove(&id);
     }
@@ -1009,6 +1074,7 @@ impl MessageHandler for Analyser {
                                 match kind {
                                     EntityKind::ViewModel => self.view_models.insert(id),
                                     EntityKind::Prop => self.props.insert(id),
+                                    EntityKind::Mover => self.movers.insert(id),
                                     EntityKind::Projectile(_) => self.projectiles.insert(id),
                                     EntityKind::SniperDot => self.sniper_dots.insert(id),
                                     EntityKind::Other => false,
@@ -1219,6 +1285,8 @@ struct Recorder {
     model_ids: HashMap<u32, u16>,
     /// Map objects being followed, and the track each one is writing to.
     open_props: HashMap<EntityId, usize>,
+    /// Each moving brush's track in `Recording::movers`, and the tick it was last seen.
+    open_movers: HashMap<u16, (usize, u32)>,
     /// The arms animation last seen: sequence, restart counter, and starting tick.
     view_sequence: (i64, i64, u32),
 }
@@ -1248,6 +1316,11 @@ fn intern_index(recording: &mut Recording, ids: &mut HashMap<u32, u16>, analyser
     id
 }
 
+/// The brush model number of a map part's model, `*8` being 8. None for model files.
+fn brush_number(path: &str) -> Option<u16> {
+    path.strip_prefix('*')?.parse().ok()
+}
+
 /// The model others see an entity with.
 fn intern_model(recording: &mut Recording, ids: &mut HashMap<u32, u16>, analyser: &Analyser, entity: EntityId) -> u16 {
     let Some(state) = analyser.entities.get(&entity) else { return 0 };
@@ -1267,9 +1340,11 @@ impl Recorder {
         recording.dot_offsets.clear();
         recording.dots.clear();
         recording.props.clear();
+        recording.movers.clear();
         self.rows.clear();
         self.row_starts.clear();
         self.open_props.clear();
+        self.open_movers.clear();
         self.view_sequence = (0, 0, 0);
     }
 
@@ -1312,6 +1387,7 @@ impl Recorder {
             row_starts,
             model_ids,
             open_props,
+            open_movers,
             view_sequence,
             ..
         } = self;
@@ -1509,6 +1585,31 @@ impl Recorder {
             }
             still_here
         });
+
+        // Doors and other moving brushes: one track per brush model, kept for the
+        // whole demo, since they never leave the map. One out of view keeps the
+        // place it was last seen.
+        for id in &analyser.movers {
+            if analyser.out_of_view.contains(id) {
+                continue;
+            }
+            let Some(mover) = analyser.entities.get(id) else { continue };
+            let Some(brush) = analyser.precache.get(mover.model as usize).and_then(|path| brush_number(path)) else {
+                continue;
+            };
+            let Some((position, rotation)) = analyser.world_transform(*id, 0) else { continue };
+            let key = MoverKey { tick, position: position.to_array(), rotation: rotation.to_array() };
+            match open_movers.get_mut(&brush) {
+                Some((track, last_seen)) => {
+                    recording.movers[*track].push(key, *last_seen);
+                    *last_seen = tick;
+                }
+                None => {
+                    open_movers.insert(brush, (recording.movers.len(), tick));
+                    recording.movers.push(MoverTrack { brush, keys: vec![key] });
+                }
+            }
+        }
 
         // Our own tracking, not the parser's: it misses projectiles placed by the
         // generic position (the Bison's and Pomson's rings) and some classes entirely
@@ -2025,6 +2126,26 @@ mod tests {
         assert!(aim_difference((0.0, 179.5), (0.0, -179.5)) < 1.01);
         assert!(aim_difference((350.0, 10.0), (-10.0, 10.0)) < 1e-3);
         assert!(aim_difference((0.0, 0.0), (0.0, 30.0)) > 29.0);
+    }
+
+    #[test]
+    fn doors_glide_between_keys_and_wait_before_moving() {
+        let at = |tick: u32, z: f32| MoverKey { tick, position: [0.0, 0.0, z], rotation: Quat::IDENTITY.to_array() };
+        let mut door = MoverTrack { brush: 8, keys: vec![at(100, 0.0)] };
+        // Seen standing still for a while: nothing new to keep.
+        door.push(at(200, 0.0), 199);
+        assert_eq!(door.keys.len(), 1);
+        // Then it opens. It sat still until tick 299, so it doesn't creep from 100.
+        door.push(at(300, 4.5), 299);
+        door.push(at(301, 9.0), 300);
+        assert_eq!(door.keys.iter().map(|key| key.tick).collect::<Vec<_>>(), [100, 299, 300, 301]);
+
+        assert!(door.at(50.0).is_none(), "where the map put it, before the demo shows it");
+        assert_eq!(door.at(250.0).unwrap().0.z, 0.0);
+        assert!((door.at(300.5).unwrap().0.z - 6.75).abs() < 1e-4);
+        assert_eq!(door.at(5000.0).unwrap().0.z, 9.0, "stays open after the last key");
+        assert_eq!(brush_number("*8"), Some(8));
+        assert_eq!(brush_number("models/props/door.mdl"), None);
     }
 
     #[test]
