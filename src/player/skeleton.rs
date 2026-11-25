@@ -1679,6 +1679,29 @@ mod real_files {
     }
 
     #[test]
+    fn every_body_group_option_lines_up_with_its_triangles() {
+        // The model file and its triangle file list each body group option's meshes
+        // separately, and they're paired in order. If any option is misread, every
+        // mesh after it gets another one's triangles, like the Demoman's shoes did.
+        for class in ["scout", "soldier", "pyro", "demo", "heavy", "engineer", "medic", "sniper", "spy"] {
+            let path = format!("models/player/{class}.mdl");
+            let (Some(model), Some(triangles)) = (load(&path), load(&path.replace(".mdl", ".dx90.vtx"))) else {
+                return;
+            };
+            let mdl = read_mdl(&model).expect("the model loads");
+            let vtx = vmdl::Vtx::read(&triangles).expect("its triangles load");
+            assert_eq!(mdl.body_parts.len(), vtx.body_parts.len(), "{class}");
+            for (group, (mdl_part, vtx_part)) in mdl.body_parts.iter().zip(&vtx.body_parts).enumerate() {
+                assert_eq!(mdl_part.models.len(), vtx_part.models.len(), "{class} group {group}");
+                for (option, (mdl_model, vtx_model)) in mdl_part.models.iter().zip(&vtx_part.models).enumerate() {
+                    let vtx_meshes = vtx_model.lods.first().map_or(0, |lod| lod.meshes.len());
+                    assert_eq!(mdl_model.meshes.len(), vtx_meshes, "{class} group {group} option {option}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn weapons_have_a_muzzle_down_the_barrel() {
         let Some(model) = load("models/weapons/c_models/c_minigun/c_minigun.mdl") else { return };
         let skeleton = Skeleton::read(&model);

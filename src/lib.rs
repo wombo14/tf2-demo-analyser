@@ -35,6 +35,7 @@ pub mod algorithms {
 }
 
 pub mod util {
+    pub mod archive;
     pub mod bsp;
     pub mod datatable_validator;
     pub mod debug_log;

@@ -1,0 +1,35 @@
+# vmdl 0.2.0 from crates.io (https://github.com/icewind1991/vmdl, MIT licence),
+# with one fix: a body group's options are read 148 bytes apart, the size of a
+# model header, instead of 144. With 144, every option after the first was read
+# 4 bytes early, so its meshes went missing and every later mesh was paired with
+# the wrong triangles: the Demoman's shoes and grenades, the Soldier's helmet.
+# See src/mdl/raw/mod.rs, BodyPartHeader::model_indexes.
+#
+# Only the library and its dependencies are kept; the original's examples,
+# tests and benchmarks aren't vendored.
+
+[package]
+edition = "2021"
+rust-version = "1.70.0"
+name = "vmdl"
+version = "0.2.0"
+description = "Rust parser for valve model files."
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/icewind1991/vmdl"
+
+[lib]
+name = "vmdl"
+path = "src/lib.rs"
+
+[dependencies]
+arrayvec = "0.7.6"
+bitflags = "2.6.0"
+bytemuck = { version = "1.17.0", features = ["derive"] }
+cgmath = "0.18.0"
+half = "2.4.1"
+itertools = "0.13.0"
+num_enum = "0.7.3"
+static_assertions = "1.1.0"
+thiserror = "1.0.63"
+tracing = "0.1.40"

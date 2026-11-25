@@ -2007,7 +2007,13 @@ mod tests {
         if let Some(dir) = find_default_tf2_dir() {
             println!("Resolved default TF2 demos dir: {}", dir.display());
             assert!(dir.is_dir());
-            assert!(dir.ends_with("demos"));
+            // The demos folder when TF2 has one; otherwise the tf folder itself, as
+            // when no demo has been recorded yet or the demos were moved elsewhere.
+            assert!(
+                dir.ends_with("demos") || !dir.join("demos").is_dir(),
+                "{} has a demos folder that wasn't used",
+                dir.display()
+            );
         }
     }
 
