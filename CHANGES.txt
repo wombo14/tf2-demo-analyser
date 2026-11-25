@@ -110,6 +110,16 @@ Main window
 HISTORY (newest first)
 ----------------------
 
+25 November 2026, later
+  - 3D player: doors built into the map (func_door, sliding and
+    swinging), along with func_movelinear, trains and spinning parts,
+    now open, close and move as they did in the match. They used to
+    stay shut where the map put them, so players walked through closed
+    doors, like the roll-up shutters on ctf_turbine. Pieces attached to
+    them, like windows and frames set into a door, move with them. A
+    door the recording player couldn't see stays where it was last
+    seen. Of TF2's 238 maps, 130 have doors or moving parts like these.
+
 25 November 2026
   - Updated to Fidoo001's latest code (commit 1329245): retrained ML
     models, improved aimbot, ml_aimbot, plain projectile, nospread,

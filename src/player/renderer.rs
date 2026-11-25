@@ -290,6 +290,9 @@ pub struct Frame {
     pub view_projection: Mat4,
     /// Camera for the miniature backdrop, placed where the real camera would be at its scale.
     pub sky_view: Option<Mat4>,
+    /// Doors and other moving brushes that aren't where the map put them: the
+    /// brush model's number, and how to move it from there.
+    pub movers: Vec<(u16, Mat4)>,
     /// Bullet traces as triangles, `TRACE_FLOATS` per vertex.
     pub traces: Vec<f32>,
     /// Lines that stay visible through walls (aim lines, hitboxes), in the same layout as
@@ -749,7 +752,8 @@ pub struct Renderer {
     meshes: Vec<MeshGpu>,
     world_vao: glow::VertexArray,
     world_buffers: [glow::Buffer; 2],
-    batches: Vec<(usize, u32, u32, bool)>,
+    /// Material, first index, index count, in the backdrop, and the moving brush it belongs to.
+    batches: Vec<(usize, u32, u32, bool, Option<u16>)>,
     materials: Vec<Material>,
     textures: Vec<glow::Texture>,
     white: glow::Texture,
@@ -994,7 +998,7 @@ impl Renderer {
                 batches: map
                     .batches
                     .iter()
-                    .map(|batch| (batch.material, batch.first_index, batch.index_count, batch.sky))
+                    .map(|batch| (batch.material, batch.first_index, batch.index_count, batch.sky, batch.mover))
                     .collect(),
                 materials: map.materials.clone(),
                 textures,
@@ -1057,20 +1061,23 @@ impl Renderer {
         gl.depth_mask(true);
     }
 
-    unsafe fn draw_world(&self, gl: &glow::Context, view_projection: &Mat4, sky: bool) {
+    unsafe fn draw_world(&self, gl: &glow::Context, view_projection: &Mat4, sky: bool, movers: &[(u16, Mat4)]) {
         let p = &self.world;
         gl.use_program(Some(p.program));
-        gl.uniform_matrix_4_f32_slice(p.view_projection.as_ref(), false, &view_projection.to_cols_array());
         gl.uniform_1_i32(gl.get_uniform_location(p.program, "base").as_ref(), 0);
         gl.uniform_1_i32(gl.get_uniform_location(p.program, "base2").as_ref(), 1);
         gl.uniform_1_i32(gl.get_uniform_location(p.program, "lightmap").as_ref(), 2);
         self.bind_on(gl, 2, self.lightmap);
         gl.bind_vertex_array(Some(self.world_vao));
 
-        for &(material, first, count, in_sky) in &self.batches {
+        for &(material, first, count, in_sky, mover) in &self.batches {
             if in_sky != sky {
                 continue;
             }
+            // A door that has moved is drawn moved; everything else where the map has it.
+            let moved = mover.and_then(|brush| movers.iter().find(|(number, _)| *number == brush));
+            let matrix = moved.map_or(*view_projection, |(_, transform)| *view_projection * *transform);
+            gl.uniform_matrix_4_f32_slice(p.view_projection.as_ref(), false, &matrix.to_cols_array());
             let m = &self.materials[material];
             self.bind_on(gl, 0, self.texture(m.base));
             self.bind_on(gl, 1, self.texture(m.base2.or(m.base)));
@@ -1299,7 +1306,7 @@ impl Renderer {
             // The miniature backdrop goes behind everything, seen from its own camera.
             if let Some(sky_view) = frame.sky_view {
                 let sky_projection = frame.projection * sky_view;
-                self.draw_world(gl, &sky_projection, true);
+                self.draw_world(gl, &sky_projection, true, &[]);
                 self.prepare_models(gl, &sky_projection);
                 for model in &self.sky_models {
                     self.draw_model_parts(gl, model, model.instance_count, false);
@@ -1312,7 +1319,7 @@ impl Renderer {
                 gl.clear(glow::DEPTH_BUFFER_BIT);
             }
 
-            self.draw_world(gl, &view_projection, false);
+            self.draw_world(gl, &view_projection, false, &frame.movers);
 
             self.prepare_models(gl, &view_projection);
             for model in &self.models {

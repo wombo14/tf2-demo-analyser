@@ -47,6 +47,34 @@ const VISIBLE_BRUSH_ENTITIES: [&str; 12] = [
     "func_physbox",
 ];
 
+/// Brush entities that move during a match. They're kept apart from the rest of
+/// the map so they can be drawn wherever the demo says they are.
+const MOVING_BRUSH_ENTITIES: [&str; 5] = ["func_door", "func_door_rotating", "func_movelinear", "func_rotating", "func_tracktrain"];
+
+/// The entity a `parentname` names, without the attachment point that can follow a comma.
+fn parent_name(value: &str) -> String {
+    value.split(',').next().unwrap_or_default().trim().to_ascii_lowercase()
+}
+
+/// Whether a brush entity moves: it's a door or other moving part itself, or it
+/// rides on one, like a window set into a door, maybe through other pieces.
+/// `named` gives each entity name's class and parent.
+fn moves_in_match(class: &str, parent: Option<&str>, named: &HashMap<String, (String, Option<String>)>) -> bool {
+    if MOVING_BRUSH_ENTITIES.contains(&class) {
+        return true;
+    }
+    let mut parent = parent.map(parent_name);
+    // A few steps up is plenty, and stops a map that loops its parents.
+    for _ in 0..8 {
+        let Some((class, next)) = parent.as_ref().and_then(|name| named.get(name)) else { return false };
+        if MOVING_BRUSH_ENTITIES.contains(&class.as_str()) {
+            return true;
+        }
+        parent = next.clone();
+    }
+    false
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct WorldVertex {
@@ -87,6 +115,9 @@ pub struct Batch {
     pub index_count: u32,
     /// Part of the miniature backdrop that gets drawn enlarged behind the map.
     pub sky: bool,
+    /// The brush model of a door or other moving part, drawn wherever the demo
+    /// says it is. None for the map's fixed surfaces.
+    pub mover: Option<u16>,
 }
 
 /// Where the miniature backdrop sits and how much it's scaled down.
@@ -161,6 +192,9 @@ pub struct MapData {
     pub lighting: Arc<LightProbe>,
     pub sky_camera: Option<SkyCamera>,
     pub bounds: (Vec3, Vec3),
+    /// Where the map file puts each moving brush model (by its number): its
+    /// surfaces are built there, and the demo moves them from there.
+    pub movers: HashMap<u16, Vec3>,
     /// Animated models: players, weapons, projectiles and buildings.
     pub meshes: Vec<MeshData>,
     pub characters: Characters,
@@ -875,7 +909,9 @@ pub fn load_model(
 
 #[derive(Default)]
 struct WorldBuilder {
-    batches: HashMap<(usize, bool), (Vec<WorldVertex>, Vec<u32>)>,
+    /// Triangles by material, whether they're in the backdrop, and which moving part they belong to.
+    batches: HashMap<(usize, bool, Option<u16>), (Vec<WorldVertex>, Vec<u32>)>,
+    movers: HashMap<u16, Vec3>,
 }
 
 impl WorldBuilder {
@@ -883,10 +919,11 @@ impl WorldBuilder {
         &mut self,
         material: usize,
         sky: bool,
+        mover: Option<u16>,
         vertices: &[WorldVertex],
         indices: impl Iterator<Item = u32>,
     ) {
-        let (target_vertices, target_indices) = self.batches.entry((material, sky)).or_default();
+        let (target_vertices, target_indices) = self.batches.entry((material, sky, mover)).or_default();
         let base = target_vertices.len() as u32;
         target_vertices.extend_from_slice(vertices);
         target_indices.extend(indices.map(|index| base + index));
@@ -967,6 +1004,16 @@ fn build_world(
             .filter(|entity| entity.prop("classname").is_some_and(|class| class.eq_ignore_ascii_case("func_areaportalwindow")))
             .filter_map(|entity| entity.prop("target").map(str::to_string)),
     );
+    let mut world = WorldBuilder::default();
+    let named: HashMap<String, (String, Option<String>)> = bsp
+        .entities
+        .iter()
+        .filter_map(|entity| {
+            let name = entity.prop("targetname")?.trim().to_ascii_lowercase();
+            let class = entity.prop("classname").unwrap_or_default().to_string();
+            Some((name, (class, entity.prop("parentname").map(parent_name))))
+        })
+        .collect();
     let mut models: Vec<(usize, Vec3)> = vec![(0, Vec3::ZERO)];
     for entity in bsp.entities.iter() {
         let class = entity.prop("classname").unwrap_or_default();
@@ -987,6 +1034,11 @@ fn build_world(
         if let Some(index) = index {
             let origin = entity.prop("origin").and_then(parse_vector).unwrap_or(Vec3::ZERO);
             models.push((index, origin));
+            if moves_in_match(class, entity.prop("parentname"), &named) {
+                if let Ok(number) = u16::try_from(index) {
+                    world.movers.insert(number, origin);
+                }
+            }
         }
     }
 
@@ -996,13 +1048,14 @@ fn build_world(
     for (index, origin) in models {
         let Some(model) = all_models.get(index) else { continue };
         let first = model.first_face.max(0) as usize;
+        let mover = u16::try_from(index).ok().filter(|number| world.movers.contains_key(number));
         for (offset, face) in model.faces().enumerate() {
             let in_sky = index == 0 && sky_faces.contains(&(first + offset));
             let name = face.texture().name();
             if !face.is_visible() || name.to_ascii_lowercase().starts_with("tools/") {
                 continue;
             }
-            faces.push((face, origin, in_sky));
+            faces.push((face, origin, in_sky, mover));
         }
     }
     let face_size = |face: &vbsp::Handle<vbsp::Face>| {
@@ -1011,7 +1064,7 @@ fn build_world(
             face.light_map_texture_size[1] as usize + 1,
         )
     };
-    faces.sort_by_key(|(face, _, _)| std::cmp::Reverse(face_size(face).1));
+    faces.sort_by_key(|(face, _, _, _)| std::cmp::Reverse(face_size(face).1));
 
     // One white texel in the corner serves faces with no lighting data.
     let mut atlas = vec![0f32; ATLAS_SIZE * ATLAS_SIZE * 3];
@@ -1022,9 +1075,8 @@ fn build_world(
         y: 0,
         row_height: 4,
     };
-    let mut world = WorldBuilder::default();
 
-    for (face, origin, in_sky) in &faces {
+    for (face, origin, in_sky, mover) in &faces {
         let texture = face.texture();
         let material = table.material(assets, texture.name());
         let data = texture.texture_data();
@@ -1114,11 +1166,11 @@ fn build_world(
                     indices.extend_from_slice(&[a, c, b, b, c, d]);
                 }
             }
-            world.add_triangles(material, *in_sky, &vertices, indices.into_iter());
+            world.add_triangles(material, *in_sky, *mover, &vertices, indices.into_iter());
         } else {
             let vertices: Vec<_> = corners.iter().map(|&p| vertex(p, p, 0.0)).collect();
             let fan = (1..vertices.len().saturating_sub(1) as u32).flat_map(|i| [0, i, i + 1]);
-            world.add_triangles(material, *in_sky, &vertices, fan);
+            world.add_triangles(material, *in_sky, *mover, &vertices, fan);
         }
     }
 
@@ -1408,13 +1460,14 @@ pub fn load_map(
     });
 
     // Opaque surfaces go first, then anything see-through.
+    let movers = world.movers;
     let mut order: Vec<_> = world.batches.into_iter().collect();
-    order.sort_by_key(|((material, _), _)| table.materials[*material].translucent);
+    order.sort_by_key(|((material, _, _), _)| table.materials[*material].translucent);
 
     let mut world_vertices = Vec::new();
     let mut world_indices = Vec::new();
     let mut batches = Vec::new();
-    for ((material, sky), (vertices, indices)) in order {
+    for ((material, sky, mover), (vertices, indices)) in order {
         let base = world_vertices.len() as u32;
         let first_index = world_indices.len() as u32;
         world_vertices.extend_from_slice(&vertices);
@@ -1424,6 +1477,7 @@ pub fn load_map(
             first_index,
             index_count: indices.len() as u32,
             sky,
+            mover,
         });
     }
 
@@ -1464,6 +1518,7 @@ pub fn load_map(
         lighting: Arc::new(lighting),
         sky_camera,
         bounds: (low, high),
+        movers,
         meshes,
         characters,
         map_props,
@@ -1484,6 +1539,25 @@ mod tests {
         assert_eq!(color_from_rgbe(&[255, 0, 0, 0]), [1.0, 0.0, 0.0]);
         assert_eq!(color_from_rgbe(&[255, 0, 0, 1]), [2.0, 0.0, 0.0]);
         assert_eq!(color_from_rgbe(&[255, 0, 0, 0xFF]), [0.5, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn brushes_riding_on_doors_move_with_them() {
+        let entry = |class: &str, parent: Option<&str>| (class.to_string(), parent.map(parent_name));
+        let named = HashMap::from([
+            ("spawn_door".to_string(), entry("func_door", None)),
+            ("door_frame".to_string(), entry("func_brush", Some("Spawn_Door"))),
+            ("statue".to_string(), entry("prop_dynamic", None)),
+            ("loop_a".to_string(), entry("func_brush", Some("loop_b"))),
+            ("loop_b".to_string(), entry("func_brush", Some("loop_a"))),
+        ]);
+        assert!(moves_in_match("func_door_rotating", None, &named));
+        assert!(moves_in_match("func_brush", Some("spawn_door"), &named), "a window in a door");
+        assert!(moves_in_match("func_brush", Some("door_frame,attach"), &named), "riding on a rider, with an attachment");
+        assert!(!moves_in_match("func_brush", Some("statue"), &named));
+        assert!(!moves_in_match("func_brush", Some("nobody"), &named));
+        assert!(!moves_in_match("func_brush", None, &named));
+        assert!(!moves_in_match("func_brush", Some("loop_a"), &named), "parents that loop");
     }
 
     #[test]

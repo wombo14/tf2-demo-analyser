@@ -15,7 +15,7 @@ use super::map::{load_map, rotation_from_angles, DemoContent, LightProbe, MapDat
 use super::audio::ear_gains;
 use super::demo_sounds::{CHAN_WEAPON, SND_CHANGE_PITCH, SND_CHANGE_VOL, SND_STOP, SND_STOP_LOOPING};
 use super::recording::{
-    read_demo, Kill, ObjectFrame, ObjectKind, PlayerFrame, Recording, NO_OWNER, ANIM_ATTACK_PRIMARY, ANIM_ATTACK_SECONDARY,
+    read_demo, Kill, MoverTrack, ObjectFrame, ObjectKind, PlayerFrame, Recording, NO_OWNER, ANIM_ATTACK_PRIMARY, ANIM_ATTACK_SECONDARY,
     ANIM_DOUBLE_JUMP, ANIM_JUMP, ANIM_RELOAD, ANIM_RELOAD_END, ANIM_RELOAD_LOOP, CLASS_HEAVY, CLASS_MEDIC, TEAM_BLUE, TEAM_RED,
 };
 
@@ -249,6 +249,20 @@ fn team_tint(team: u8) -> [f32; 3] {
         TEAM_BLUE => [0.16, 0.34, 0.7],
         _ => [0.6, 0.6, 0.6],
     }
+}
+
+/// How to move each door or other moving brush from where the map built it to
+/// where the demo has it at `tick`. The map's surfaces for it sit at the map
+/// file's origin, so they're taken back to it, then turned and placed as the demo says.
+fn mover_transforms(tracks: &[MoverTrack], origins: &HashMap<u16, Vec3>, tick: f64) -> Vec<(u16, Mat4)> {
+    tracks
+        .iter()
+        .filter_map(|track| {
+            let origin = origins.get(&track.brush)?;
+            let (position, rotation) = track.at(tick)?;
+            Some((track.brush, Mat4::from_rotation_translation(rotation, position) * Mat4::from_translation(-*origin)))
+        })
+        .collect()
 }
 
 fn class_name(class: u8) -> &'static str {
@@ -1455,6 +1469,8 @@ pub struct Session {
     characters: Characters,
     /// Objects from the map file that the demo never showed, with their lighting.
     map_props: Vec<(MapProp, ModelLighting)>,
+    /// Where the map file puts each door and other moving brush, by brush model number.
+    mover_origins: HashMap<u16, Vec3>,
     scope_image: Option<super::assets::Image>,
     scope_texture: Option<egui::TextureHandle>,
     crosshair_image: Option<super::assets::Image>,
@@ -1608,6 +1624,7 @@ impl Session {
             sky_camera: map.sky_camera,
             characters,
             map_props,
+            mover_origins: std::mem::take(&mut map.movers),
             scope_image,
             scope_texture: None,
             crosshair_image,
@@ -2038,6 +2055,12 @@ impl Session {
             input.move_x, input.move_y, input.body_pitch, input.time, input.gesture
         );
         Some((key, details))
+    }
+
+    /// How far each door and other moving brush has moved from where the map
+    /// put it, at the current tick. Ones the demo hasn't shown yet are left out.
+    fn mover_transforms(&self) -> Vec<(u16, Mat4)> {
+        mover_transforms(&self.recording.movers, &self.mover_origins, self.tick)
     }
 
     /// Where the 3D view was drawn last frame.
@@ -4728,6 +4751,7 @@ impl Session {
             view_actors,
             view_projection,
             sky_view,
+            movers: self.mover_transforms(),
             traces: self.traces(&camera),
             overlay: self.overlay(&camera, &boxes),
         };
@@ -5225,6 +5249,31 @@ fn first_player(recording: &Recording) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn doors_are_drawn_where_the_demo_has_them() {
+        use super::super::recording::MoverKey;
+        let key = |tick: u32, z: f32, yaw: f32| MoverKey {
+            tick,
+            position: [100.0, 0.0, z],
+            rotation: glam::Quat::from_rotation_z(yaw.to_radians()).to_array(),
+        };
+        // A shutter the map puts at z 0, rolled up 60 units by tick 200.
+        let shutter = MoverTrack { brush: 8, keys: vec![key(100, 0.0, 0.0), key(200, 60.0, 0.0)] };
+        // A swinging door, quarter of the way round by tick 200.
+        let swing = MoverTrack { brush: 9, keys: vec![key(100, 0.0, 0.0), key(200, 0.0, 90.0)] };
+        // Not in the map's list of moving brushes, so not moved.
+        let unknown = MoverTrack { brush: 10, keys: vec![key(100, 50.0, 0.0)] };
+        let origins = HashMap::from([(8, Vec3::new(100.0, 0.0, 0.0)), (9, Vec3::new(100.0, 0.0, 0.0))]);
+
+        let moved = mover_transforms(&[shutter, swing, unknown], &origins, 200.0);
+        assert_eq!(moved.len(), 2);
+        // A corner of each, as the map built it, beside the origin.
+        let corner = Vec3::new(110.0, 0.0, 5.0);
+        assert!(moved[0].1.transform_point3(corner).abs_diff_eq(Vec3::new(110.0, 0.0, 65.0), 1e-3));
+        assert!(moved[1].1.transform_point3(corner).abs_diff_eq(Vec3::new(100.0, 10.0, 5.0), 1e-3));
+        assert!(mover_transforms(&[], &origins, 200.0).is_empty());
+    }
 
     #[test]
     fn angles_blend_the_short_way_round() {
